@@ -1,3 +1,6 @@
 <resources>
-    <string name="app_name">Asistente Portatil Kofu</string>
+    <string name="app_name">Kofu Assistant</string>
+    <string name="kofu_subtitle_ready">Motor local activo</string>
+    <string name="kofu_calm_mode_badge">🧘 Modo Calma</string>
+    <string name="kofu_input_placeholder">Escribe un mensaje a Kofu...</string>
 </resources>

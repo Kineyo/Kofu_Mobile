@@ -1,7 +1,6 @@
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
-    id("org.jetbrains.kotlin.plugin.serialization")
 }
 
 android {
@@ -18,6 +17,9 @@ android {
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables {
             useSupportLibrary = true
+        }
+        ndk {
+            abiFilters += listOf("arm64-v8a")
         }
     }
 
@@ -44,7 +46,8 @@ android {
         kotlinCompilerExtensionVersion = "1.5.8"
     }
     androidResources {
-        noCompress += listOf("tar.gz", "gz", "tar")
+        // Evita que AAPT2 comprima pesos de modelos para permitir mmap directo en memoria (zero-copy)
+        noCompress += listOf("litertlm", "tflite", "task", "gguf", "bin")
     }
     packaging {
         resources {
@@ -54,11 +57,12 @@ android {
 }
 
 dependencies {
+    // AndroidX Core & Lifecycle
     implementation("androidx.core:core-ktx:1.12.0")
     implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.7.0")
     implementation("androidx.activity:activity-compose:1.8.2")
 
-    // Compose BOM & UI
+    // Jetpack Compose BOM & UI
     implementation(platform("androidx.compose:compose-bom:2024.02.01"))
     implementation("androidx.compose.ui:ui")
     implementation("androidx.compose.ui:ui-graphics")
@@ -66,24 +70,19 @@ dependencies {
     implementation("androidx.compose.material3:material3")
     implementation("androidx.compose.animation:animation")
 
-    // Apache Commons Compress for Tar extraction
-    implementation("org.apache.commons:commons-compress:1.26.1")
-
-    // Llama.cpp native JNI (Descomenta esto cuando actualices CompileSDK a 36 o el AGP)
+    // Motores Nativos de Inferencia On-Device (ARM64)
+    // Google LiteRT / MediaPipe Tasks GenAI (NPU/GPU Delegate):
+    // implementation("com.google.mediapipe:tasks-genai:0.10.14")
+    // Llama.cpp Native JNI Fallback (GGUF mmap):
     // implementation("io.github.ljcamargo:llamacpp-kotlin:0.4.0")
 
-    implementation("io.ktor:ktor-client-android:2.3.8")
-    implementation("io.ktor:ktor-client-okhttp:2.3.8")
-    implementation("io.ktor:ktor-client-content-negotiation:2.3.8")
-    implementation("io.ktor:ktor-serialization-kotlinx-json:2.3.8")
-    implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.6.2")
-
-    // OkHttp
+    // Descarga de modelos desde HuggingFace
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
 
-    // Coil Compose
+    // Carga de Imágenes Asíncrona en Compose
     implementation("io.coil-kt:coil-compose:2.6.0")
 
+    // Testing & Debug Tooling
     testImplementation("junit:junit:4.13.2")
     debugImplementation("androidx.compose.ui:ui-tooling")
     debugImplementation("androidx.compose.ui:ui-test-manifest")

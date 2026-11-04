@@ -14,5 +14,5 @@ dependencyResolutionManagement {
     }
 }
 
-rootProject.name = "app2_promeia_core"
+rootProject.name = "Kofu_Assistant"
 include(":app")
