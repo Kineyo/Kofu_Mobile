@@ -20,16 +20,19 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.WindowInsetsSides
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.imePadding
-import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.layout.only
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
@@ -318,12 +321,16 @@ fun ChatScreen(
             }
 
             // BARRA DE ENTRADA COMPACTA
+            // En modo edge-to-edge con adjustResize, safeDrawing.only(Bottom) calcula
+            // la unión exacta entre la barra de navegación (teclado cerrado) y el IME (teclado abierto).
+            // Esto elimina completamente el bug de doble padding que enviaba el cuadro de texto muy arriba.
             Surface(
                 color = colors.surface,
                 modifier = Modifier
                     .fillMaxWidth()
-                    .navigationBarsPadding()
-                    .imePadding()
+                    .windowInsetsPadding(
+                        WindowInsets.safeDrawing.only(WindowInsetsSides.Bottom)
+                    )
             ) {
                 Column {
                     HorizontalDivider(color = colors.divider, thickness = 1.dp)
