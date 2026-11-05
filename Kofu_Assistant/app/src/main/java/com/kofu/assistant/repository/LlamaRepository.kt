@@ -24,16 +24,23 @@ import java.util.concurrent.TimeUnit
 enum class InferenceBackend(val displayName: String) {
     NONE("Sin motor"),
     LITERT("LiteRT C++ (GPU/NPU)"),
-    GGUF_FALLBACK("GGUF C++ (CPU/JNI Fallback)")
+    GGUF_FALLBACK("GGUF C++ (CPU/JNI ARM64)")
 }
 
+data class TurnMessage(
+    val role: String, // "user", "model", "system"
+    val content: String
+)
+
 /**
- * Repositorio de alto nivel que conecta el motor nativo en C++ (libkofu_engine.so)
- * con la interfaz estética en Kotlin (Jetpack Compose).
+ * Repositorio de alto nivel v2.0 que conecta el motor nativo en C++ (libkofu_engine.so)
+ * con la interfaz Jetpack Compose.
  *
- * Toda la computación pesada, formateo de prompts, sanitización, mmap y ciclo de
- * inferencia corre exclusivamente en C++. Kotlin únicamente gestiona estados de UI
- * y transferencia de datos.
+ * Características v2.0:
+ * - Soporte Multi-Turno con memoria contextual para diálogos continuos.
+ * - Importación True Zero-Copy usando FileDescriptor directo (evita duplicar 1.5 GB).
+ * - Descargas resilientes con reanudación HTTP (Range: bytes=...).
+ * - Notificaciones de estado de benchmarks nativos (t/s, memoria RSS).
  */
 object LlamaRepository {
     private const val TAG = "LlamaRepository"
@@ -45,28 +52,29 @@ object LlamaRepository {
 
     private val supportedExtensions = listOf(".litertlm", ".task", ".tflite", ".bin", ".gguf")
 
-    // Modelo Oficial del Proyecto Kofu Mobile entrenado y optimizado para edge (ARM64)
-    private const val DEFAULT_KOFU_GGUF_FILENAME = "kofu-gemma-2b-edge-q4_k_m.gguf"
-    private const val DEFAULT_KOFU_GGUF_URL =
-        "https://huggingface.co/shebxyd/kofu-2b-edge/resolve/main/kofu-gemma-2b-edge-q4_k_m.gguf"
+    // Modelo Oficial Kofu v2.0
+    const val DEFAULT_KOFU_V2_GGUF_FILENAME = "kofu-v2-edge-q4_k_m.gguf"
+    const val DEFAULT_KOFU_V2_GGUF_URL =
+        "https://huggingface.co/shebxyd/kofu-v2-edge/resolve/main/kofu-v2-edge-q4_k_m.gguf"
 
-    // Fallback de respaldo LiteRT
-    private const val FALLBACK_LITERT_FILENAME = "Gemma-2B-It-GPU-Int4.litertlm"
-    private const val FALLBACK_LITERT_URL =
-        "https://huggingface.co/litert-community/Gemma2-2B-IT/resolve/main/gemma2-2b-it-gpu-int4.litertlm"
+    // Modelo Kofu v1.0 (Fallback)
+    const val FALLBACK_KOFU_V1_FILENAME = "kofu-gemma-2b-edge-q4_k_m.gguf"
+    const val FALLBACK_KOFU_V1_URL =
+        "https://huggingface.co/shebxyd/kofu-2b-edge/resolve/main/kofu-gemma-2b-edge-q4_k_m.gguf"
 
     init {
         if (KofuNativeEngine.isNativeReady()) {
             KofuNativeEngine.nativeInit()
-            Log.i(TAG, "Motor nativo C++ inicializado correctamente")
+            Log.i(TAG, "Motor nativo C++ v2.0 inicializado")
         } else {
             Log.w(TAG, "Librería nativa C++ aún no cargada")
         }
     }
 
     /**
-     * Carga un modelo en el backend nativo C++. Si la URI proviene de un ContentProvider,
-     * se prepara en caché local para permitir mmap directo desde C++.
+     * Carga un modelo en el backend C++.
+     * Si la URI proviene de SAF (content://), se obtiene el FileDescriptor directamente
+     * para realizar mmap inmediato sin copiar el archivo a disco (True Zero-Copy).
      */
     fun loadModel(
         context: Context,
@@ -85,18 +93,28 @@ object LlamaRepository {
         }
 
         scope.launch(Dispatchers.IO) {
-            val localFilePath = resolveLocalFilePath(context, modelUri, fileName)
-            if (localFilePath == null) {
-                withContext(Dispatchers.Main) {
-                    isModelLoaded = false
-                    activeBackend = InferenceBackend.NONE
-                    currentModelName = "Error: No se pudo resolver la ruta local del archivo"
+            var loaded = false
+
+            if (modelUri.scheme == "content") {
+                try {
+                    val pfd = context.contentResolver.openFileDescriptor(modelUri, "r")
+                    if (pfd != null) {
+                        val fd = pfd.detachFd()
+                        val size = pfd.statSize
+                        loaded = KofuNativeEngine.nativeLoadModelFd(fd, size, fileName)
+                        pfd.close()
+                    }
+                } catch (e: Exception) {
+                    Log.w(TAG, "Fallo al mapear FD directo, intentando ruta alternativa...", e)
                 }
-                return@launch
             }
 
-            // Llamada directa al motor C++ para mmap y verificación de cabecera binaria
-            val loaded = KofuNativeEngine.nativeLoadModel(localFilePath)
+            if (!loaded) {
+                val localFilePath = resolveLocalFilePath(context, modelUri, fileName)
+                if (localFilePath != null) {
+                    loaded = KofuNativeEngine.nativeLoadModel(localFilePath)
+                }
+            }
 
             withContext(Dispatchers.Main) {
                 if (loaded) {
@@ -105,7 +123,7 @@ object LlamaRepository {
                     activeBackend = when (KofuNativeEngine.nativeGetBackendType()) {
                         1 -> InferenceBackend.LITERT
                         2 -> InferenceBackend.GGUF_FALLBACK
-                        else -> InferenceBackend.LITERT
+                        else -> InferenceBackend.GGUF_FALLBACK
                     }
                     lastBenchmarkStats = KofuNativeEngine.nativeGetStatsJson()
                     Log.i(TAG, "Modelo cargado en C++: $currentModelName | Backend: ${activeBackend.displayName}")
@@ -113,7 +131,7 @@ object LlamaRepository {
                     isModelLoaded = false
                     activeBackend = InferenceBackend.NONE
                     currentModelName = "Error: Fallo al cargar en el motor C++"
-                    Log.e(TAG, "Fallo nativo cargando $localFilePath")
+                    Log.e(TAG, "Fallo nativo cargando $fileName")
                 }
             }
         }
@@ -134,7 +152,7 @@ object LlamaRepository {
             }
             cacheFile.absolutePath
         } catch (e: Exception) {
-            Log.e(TAG, "Error copiando content:// a caché para mmap en C++", e)
+            Log.e(TAG, "Error resolviendo ruta local de archivo", e)
             null
         }
     }
@@ -154,21 +172,23 @@ object LlamaRepository {
                 Log.w(TAG, "No se pudo consultar DISPLAY_NAME", e)
             }
         }
-        return uri.lastPathSegment ?: "modelo_kofu.litertlm"
+        return uri.lastPathSegment ?: "modelo_kofu.gguf"
     }
 
     /**
-     * Generación de texto transmitida token por token desde el motor C++
-     * mediante callback nativo a un Flow reactivo de Kotlin.
+     * Generación de texto multi-turno con historial conversacional continuo.
      */
-    fun generateResponseStream(prompt: String): Flow<String> = callbackFlow {
+    fun generateChatStream(history: List<TurnMessage>): Flow<String> = callbackFlow {
         if (!KofuNativeEngine.nativeIsModelLoaded()) {
             trySend("Error [C++ Backend]: Ningún modelo cargado. Selecciona un archivo o descarga el predeterminado.")
             close()
             return@callbackFlow
         }
 
-        KofuNativeEngine.nativeGenerateStream(prompt) { token ->
+        val roles = history.map { it.role }.toTypedArray()
+        val messages = history.map { it.content }.toTypedArray()
+
+        KofuNativeEngine.nativeGenerateStreamHistory(roles, messages) { token ->
             trySend(token)
         }
 
@@ -180,10 +200,19 @@ object LlamaRepository {
         }
     }.flowOn(Dispatchers.IO)
 
+    /**
+     * Generación simple de un solo turno (compatibilidad)
+     */
+    fun generateResponseStream(prompt: String): Flow<String> =
+        generateChatStream(listOf(TurnMessage("user", prompt)))
+
     fun cancelGeneration() {
         KofuNativeEngine.nativeCancelGeneration()
     }
 
+    /**
+     * Descarga de modelos con soporte para reanudar descargas incompletas.
+     */
     fun downloadDefaultModel(
         context: Context,
         onProgress: (Float) -> Unit,
@@ -196,81 +225,92 @@ object LlamaRepository {
             return
         }
 
-        // 1. Verificar si el modelo oficial de Kofu ya existe localmente
-        val existingKofuGguf = File(externalDir, DEFAULT_KOFU_GGUF_FILENAME)
-        if (existingKofuGguf.exists() && existingKofuGguf.length() > 100L * 1024L * 1024L) {
-            onComplete(Uri.fromFile(existingKofuGguf))
+        // 1. Comprobar si ya existe Kofu v2.0 localmente
+        val existingV2 = File(externalDir, DEFAULT_KOFU_V2_GGUF_FILENAME)
+        if (existingV2.exists() && existingV2.length() > 100L * 1024L * 1024L) {
+            onComplete(Uri.fromFile(existingV2))
             return
         }
 
-        val existingLiteRt = File(externalDir, FALLBACK_LITERT_FILENAME)
-        if (existingLiteRt.exists() && existingLiteRt.length() > 10L * 1024L * 1024L) {
-            onComplete(Uri.fromFile(existingLiteRt))
+        // 2. Comprobar si existe Kofu v1.0
+        val existingV1 = File(externalDir, FALLBACK_KOFU_V1_FILENAME)
+        if (existingV1.exists() && existingV1.length() > 100L * 1024L * 1024L) {
+            onComplete(Uri.fromFile(existingV1))
             return
         }
 
         CoroutineScope(Dispatchers.IO).launch {
             val client = OkHttpClient.Builder()
                 .connectTimeout(30, TimeUnit.SECONDS)
-                .readTimeout(120, TimeUnit.SECONDS)
+                .readTimeout(180, TimeUnit.SECONDS)
                 .writeTimeout(60, TimeUnit.SECONDS)
                 .build()
 
-            // Descarga primaria: Modelo propio entrenado Kofu Gemma 2B Edge
-            val kofuTarget = File(externalDir, DEFAULT_KOFU_GGUF_FILENAME)
-            val kofuSuccess = tryDownloadFile(client, DEFAULT_KOFU_GGUF_URL, kofuTarget, onProgress)
+            // Intentar descargar Kofu v2.0 primero
+            val v2Target = File(externalDir, DEFAULT_KOFU_V2_GGUF_FILENAME)
+            val v2Success = tryDownloadFileWithResume(client, DEFAULT_KOFU_V2_GGUF_URL, v2Target, onProgress)
 
-            if (kofuSuccess && kofuTarget.length() > 1024L) {
+            if (v2Success && v2Target.length() > 1024L) {
                 withContext(Dispatchers.Main) {
-                    onComplete(Uri.fromFile(kofuTarget))
+                    onComplete(Uri.fromFile(v2Target))
                 }
                 return@launch
-            } else {
-                kofuTarget.delete()
-                Log.w(TAG, "Descarga de $DEFAULT_KOFU_GGUF_URL no completada, aplicando fallback a $FALLBACK_LITERT_FILENAME...")
             }
 
-            // Fallback secundario: LiteRT oficial
-            val liteRtTarget = File(externalDir, FALLBACK_LITERT_FILENAME)
-            try {
-                val liteRtSuccess = tryDownloadFile(client, FALLBACK_LITERT_URL, liteRtTarget, onProgress)
-                if (liteRtSuccess && liteRtTarget.length() > 1024L) {
-                    withContext(Dispatchers.Main) {
-                        onComplete(Uri.fromFile(liteRtTarget))
-                    }
-                } else {
-                    liteRtTarget.delete()
-                    withContext(Dispatchers.Main) {
-                        onError("No se pudo descargar el modelo oficial de Kofu ni el de respaldo")
-                    }
-                }
-            } catch (e: Exception) {
-                liteRtTarget.delete()
+            // Fallback a Kofu v1.0
+            val v1Target = File(externalDir, FALLBACK_KOFU_V1_FILENAME)
+            val v1Success = tryDownloadFileWithResume(client, FALLBACK_KOFU_V1_URL, v1Target, onProgress)
+
+            if (v1Success && v1Target.length() > 1024L) {
                 withContext(Dispatchers.Main) {
-                    onError(e.localizedMessage ?: "Error de descarga")
+                    onComplete(Uri.fromFile(v1Target))
+                }
+            } else {
+                withContext(Dispatchers.Main) {
+                    onError("No se pudo descargar el modelo oficial de Kofu")
                 }
             }
         }
     }
 
-    private suspend fun tryDownloadFile(
+    private suspend fun tryDownloadFileWithResume(
         client: OkHttpClient,
         url: String,
         targetFile: File,
         onProgress: (Float) -> Unit
     ): Boolean {
         return try {
-            val request = Request.Builder().url(url).build()
+            var existingLength = 0L
+            if (targetFile.exists()) {
+                existingLength = targetFile.length()
+            }
+
+            val requestBuilder = Request.Builder().url(url)
+            if (existingLength > 0) {
+                requestBuilder.header("Range", "bytes=$existingLength-")
+            }
+
+            val request = requestBuilder.build()
             client.newCall(request).execute().use { response ->
-                if (!response.isSuccessful) return false
+                val code = response.code
+                val isResume = (code == 206)
+                if (code != 200 && code != 206) {
+                    if (code == 416) { // Range not satisfiable -> archivo ya completo
+                        return true
+                    }
+                    return false
+                }
 
                 val body = response.body ?: return false
-                val totalLength = body.contentLength()
-                val inputStream = body.byteStream()
-                val outputStream = FileOutputStream(targetFile)
+                val contentLength = body.contentLength()
+                val totalLength = if (isResume) existingLength + contentLength else contentLength
 
-                val buffer = ByteArray(8 * 1024)
-                var downloaded: Long = 0
+                val append = isResume
+                var downloaded = if (isResume) existingLength else 0L
+
+                val inputStream = body.byteStream()
+                val outputStream = FileOutputStream(targetFile, append)
+                val buffer = ByteArray(16 * 1024)
                 var read: Int
                 var lastProgressTime = System.currentTimeMillis()
 
@@ -294,8 +334,7 @@ object LlamaRepository {
                 true
             }
         } catch (e: Exception) {
-            Log.w(TAG, "Excepción descargando $url: ${e.message}")
-            targetFile.delete()
+            Log.w(TAG, "Error descargando con reanudación $url: ${e.message}")
             false
         }
     }

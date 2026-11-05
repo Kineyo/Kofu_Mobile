@@ -28,6 +28,7 @@ public:
     ~ModelLoader();
 
     bool load(const std::string& filepath);
+    bool load_fd(int fd, size_t size, const std::string& name = "imported_fd_model");
     void unload();
 
     [[nodiscard]] bool is_loaded() const { return mapped_data_ != nullptr; }
@@ -39,6 +40,7 @@ private:
     uint8_t* mapped_data_ = nullptr;
     size_t mapped_size_ = 0;
     int file_descriptor_ = -1;
+    bool owns_fd_ = true;
     ModelMetadata metadata_;
 
     bool parse_metadata(const std::string& filepath);

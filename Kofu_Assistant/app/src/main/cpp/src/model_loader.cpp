@@ -29,6 +29,7 @@ bool ModelLoader::load(const std::string& filepath) {
         LOGE("Error abriendo archivo %s", filepath.c_str());
         return false;
     }
+    owns_fd_ = true;
 
     struct stat sb{};
     if (fstat(file_descriptor_, &sb) < 0) {
@@ -51,6 +52,7 @@ bool ModelLoader::load(const std::string& filepath) {
         LOGE("mmap falló para %s (tamaño: %zu bytes)", filepath.c_str(), mapped_size_);
         close(file_descriptor_);
         file_descriptor_ = -1;
+        mapped_size_ = 0;
         return false;
     }
 
@@ -69,13 +71,48 @@ bool ModelLoader::load(const std::string& filepath) {
     return true;
 }
 
+bool ModelLoader::load_fd(int fd, size_t size, const std::string& name) {
+    unload();
+
+    if (fd < 0 || size < 16) {
+        LOGE("Descriptor de archivo inválido o tamaño insuficiente (fd=%d, size=%zu)", fd, size);
+        return false;
+    }
+
+    file_descriptor_ = fd;
+    owns_fd_ = false; // El FD proviene de ParcelFileDescriptor de Android
+    mapped_size_ = size;
+
+    void* addr = mmap(nullptr, mapped_size_, PROT_READ, MAP_SHARED, file_descriptor_, 0);
+    if (addr == MAP_FAILED) {
+        LOGE("mmap falló para descriptor fd=%d (tamaño: %zu bytes)", fd, mapped_size_);
+        file_descriptor_ = -1;
+        mapped_size_ = 0;
+        return false;
+    }
+
+    mapped_data_ = static_cast<uint8_t*>(addr);
+    metadata_.file_size = mapped_size_;
+    metadata_.filename = name;
+
+    if (!parse_metadata(name)) {
+        LOGW("FD cargado pero metadatos no reconocidos con precisión");
+    }
+
+    LOGI("Modelo cargado exitosamente vía mmap (Zero-Copy FD): %s (%zu MB)",
+         metadata_.filename.c_str(), mapped_size_ / (1024 * 1024));
+    return true;
+}
+
 void ModelLoader::unload() {
     if (mapped_data_ != nullptr && mapped_size_ > 0) {
         munmap(mapped_data_, mapped_size_);
         mapped_data_ = nullptr;
     }
     if (file_descriptor_ >= 0) {
-        close(file_descriptor_);
+        if (owns_fd_) {
+            close(file_descriptor_);
+        }
         file_descriptor_ = -1;
     }
     mapped_size_ = 0;
@@ -99,51 +136,42 @@ bool ModelLoader::parse_metadata(const std::string& filepath) {
         metadata_.is_valid = true;
         return true;
     }
-    if (lower.ends_with(".litertlm") || lower.ends_with(".tflite") ||
-        lower.ends_with(".task") || lower.ends_with(".bin")) {
+    if (lower.ends_with(".litertlm") || lower.ends_with(".tflite") || lower.ends_with(".task")) {
         metadata_.format = ModelFormat::LITERT;
         metadata_.is_valid = true;
         return true;
     }
 
-    metadata_.format = ModelFormat::UNKNOWN;
-    metadata_.is_valid = false;
     return false;
 }
 
 bool ModelLoader::check_gguf_magic(const uint8_t* data, size_t size, ModelMetadata& out) {
-    if (size < 4) return false;
+    if (size < 8) return false;
+    // Magic: GGUF = 0x46554747 (GGUF en little endian)
     if (data[0] == 'G' && data[1] == 'G' && data[2] == 'U' && data[3] == 'F') {
         out.format = ModelFormat::GGUF;
         out.is_valid = true;
-        if (size >= 8) {
-            uint32_t version = 0;
-            std::memcpy(&version, data + 4, sizeof(version));
-            out.version = version;
+        // Version uint32
+        out.version = *reinterpret_cast<const uint32_t*>(data + 4);
+        if (size >= 24) {
+            out.tensor_count = *reinterpret_cast<const uint64_t*>(data + 8);
+            out.kv_count = *reinterpret_cast<const uint64_t*>(data + 16);
         }
+        LOGI("Cabecera GGUF detectada: versión %u, tensores %lu, kv %lu",
+             out.version, (unsigned long)out.tensor_count, (unsigned long)out.kv_count);
         return true;
     }
     return false;
 }
 
 bool ModelLoader::check_litert_magic(const uint8_t* data, size_t size, ModelMetadata& out) {
-    if (size < 4) return false;
-
-    // Check for FlatBuffers / TFL3 magic
-    if (data[0] == 'T' && data[1] == 'F' && data[2] == 'L' && data[3] == '3') {
+    if (size < 8) return false;
+    // FlatBuffers / LiteRT: offset 4 contiene 'TFL3'
+    if (data[4] == 'T' && data[5] == 'F' && data[6] == 'L' && data[7] == '3') {
         out.format = ModelFormat::LITERT;
         out.is_valid = true;
-        return true;
-    }
-    if (size >= 8 && data[4] == 'T' && data[5] == 'F' && data[6] == 'L' && data[7] == '3') {
-        out.format = ModelFormat::LITERT;
-        out.is_valid = true;
-        return true;
-    }
-    // Check for Zip container (.task / .litertlm format packaging)
-    if (data[0] == 0x50 && data[1] == 0x4B) { // PK
-        out.format = ModelFormat::LITERT;
-        out.is_valid = true;
+        out.version = 3;
+        LOGI("Cabecera LiteRT FlatBuffers detectada (TFL3)");
         return true;
     }
     return false;

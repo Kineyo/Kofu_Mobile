@@ -26,24 +26,80 @@ std::string PromptFormatter::sanitize_input(std::string_view raw_prompt) {
 std::string PromptFormatter::format_chat_prompt(
     std::string_view user_prompt,
     std::string_view system_prompt,
-    ModelFormat format
+    PromptStyle style
 ) {
-    std::string clean_user = sanitize_input(user_prompt);
-    std::ostringstream ss;
+    std::vector<ChatTurn> turns;
+    if (!system_prompt.empty()) {
+        turns.push_back({"system", std::string(system_prompt)});
+    }
+    turns.push_back({"user", std::string(user_prompt)});
+    return format_multi_turn_prompt(turns, system_prompt, style);
+}
 
-    if (format == ModelFormat::LITERT) {
-        // Gemma standard instruction format
-        ss << "<start_of_turn>user\n"
-           << system_prompt << "\n\n"
-           << clean_user << "<end_of_turn>\n"
-           << "<start_of_turn>model\n";
-    } else {
-        // Llama-3 / ChatML format
-        ss << "<|begin_of_text|><|start_header_id|>system<|end_header_id|>\n"
-           << system_prompt << "<|eot_id|>\n"
-           << "<|start_header_id|>user<|end_header_id|>\n"
-           << clean_user << "<|eot_id|>\n"
-           << "<|start_header_id|>assistant<|end_header_id|>\n";
+std::string PromptFormatter::format_multi_turn_prompt(
+    const std::vector<ChatTurn>& turns,
+    std::string_view default_system,
+    PromptStyle style
+) {
+    std::ostringstream ss;
+    std::string system_msg(default_system);
+
+    // Look for explicit system message in turns if present
+    for (const auto& t : turns) {
+        if (t.role == "system") {
+            system_msg = sanitize_input(t.content);
+            break;
+        }
+    }
+
+    if (style == PromptStyle::GEMMA || style == PromptStyle::AUTO) {
+        // Gemma 1 / Gemma 2 official Turn template:
+        // System instruction is prepended to the first user turn
+        bool first_user = true;
+        for (const auto& t : turns) {
+            if (t.role == "system") continue;
+
+            std::string clean = sanitize_input(t.content);
+            if (clean.empty()) continue;
+
+            if (t.role == "user") {
+                ss << "<start_of_turn>user\n";
+                if (first_user && !system_msg.empty()) {
+                    ss << system_msg << "\n\n";
+                    first_user = false;
+                }
+                ss << clean << "<end_of_turn>\n";
+            } else if (t.role == "model" || t.role == "assistant") {
+                ss << "<start_of_turn>model\n" << clean << "<end_of_turn>\n";
+            }
+        }
+        // Open turn for model generation
+        ss << "<start_of_turn>model\n";
+    } else if (style == PromptStyle::CHATML) {
+        if (!system_msg.empty()) {
+            ss << "<|im_start|>system\n" << system_msg << "<|im_end|>\n";
+        }
+        for (const auto& t : turns) {
+            if (t.role == "system") continue;
+            std::string clean = sanitize_input(t.content);
+            if (clean.empty()) continue;
+            std::string role = (t.role == "model") ? "assistant" : t.role;
+            ss << "<|im_start|>" << role << "\n" << clean << "<|im_end|>\n";
+        }
+        ss << "<|im_start|>assistant\n";
+    } else { // LLAMA3
+        ss << "<|begin_of_text|>";
+        if (!system_msg.empty()) {
+            ss << "<|start_header_id|>system<|end_header_id|>\n\n" << system_msg << "<|eot_id|>";
+        }
+        for (const auto& t : turns) {
+            if (t.role == "system") continue;
+            std::string clean = sanitize_input(t.content);
+            if (clean.empty()) continue;
+            std::string role = (t.role == "model") ? "assistant" : t.role;
+            ss << "<|start_header_id|>" << role << "<|end_header_id|>\n\n" << clean << "<|eot_id|>";
+        }
+        ss << "<|start_header_id|>assistant<|end_header_id|>\n\n";
     }
 
     return ss.str();

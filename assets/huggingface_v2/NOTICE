@@ -1,0 +1,44 @@
+Kofu 2.0 Edge
+Copyright (c) 2026 alex minerva (shebxyd)
+
+This model derivative is based on Gemma 2 2B ("google/gemma-2-2b-it"),
+developed and released by Google LLC.
+
+Gemma is a trademark of Google LLC.
+
+================================================================================
+NOTICE OF MODIFICATIONS
+================================================================================
+In accordance with Section 3 of the Gemma Terms of Use, notice is hereby given
+that this model has been modified from the original Gemma 2 2B base model:
+
+1. Parameter-Efficient Fine-Tuning (PEFT) using LoRA (Low-Rank Adaptation):
+   - Base Model: google/gemma-2-2b-it (Google LLC)
+   - Target Modules: q_proj, k_proj, v_proj, o_proj, gate_proj, up_proj, down_proj
+   - Rank (r): 16, Alpha: 32, Dropout: 0.05
+   - Context Window: 512 tokens with dynamic turn sequence collation
+   - Training Datasets:
+     * Yahir/alpaca-logica-programacion (Lógica y programación)
+     * sahil2801/CodeAlpaca-20k (Algoritmos C++, Java, Web)
+     * plncmm/spanish-alpaca (Razonamiento, ciencias, valores en español)
+     * murdok1982/gemma4-programacion-seguridad (Ciberseguridad defensiva)
+2. Weight merging into full-precision SafeTensors format.
+3. Quantization to GGUF format (Q4_K_M) optimized for zero-copy memory mapping
+   (mmap) execution on edge and mobile ARM64 hardware (Kofu Mobile Android runtime).
+
+================================================================================
+TERMS AND CONDITIONS
+================================================================================
+Use, reproduction, and distribution of this model and its derivatives are
+subject to:
+
+1. Gemma Terms of Use:
+   https://ai.google.dev/gemma/terms
+
+2. Google Generative AI Prohibited Use Policy:
+   https://policies.google.com/terms/generative-ai/use-policy
+
+DISCLAIMER:
+This model derivative is distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR
+CONDITIONS OF ANY KIND. It is an independent project and is not affiliated with,
+sponsored by, or endorsed by Google LLC.

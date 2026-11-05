@@ -4,7 +4,10 @@
 #include <memory>
 #include <functional>
 #include <atomic>
+#include <vector>
+#include <mutex>
 #include "model_loader.hpp"
+#include "prompt_formatter.hpp"
 
 namespace kofu {
 
@@ -21,14 +24,20 @@ public:
     static KofuEngine& instance();
 
     bool load_model(const std::string& filepath);
+    bool load_model_fd(int fd, size_t size, const std::string& name = "imported_model.gguf");
     void unload_model();
 
     bool is_model_loaded() const;
     std::string get_model_name() const;
-    int get_backend_type() const; // 0=NONE, 1=LITERT, 2=GGUF_FALLBACK
+    int get_backend_type() const; // 0=NONE, 1=LITERT, 2=GGUF
 
     void generate_stream(
         const std::string& prompt,
+        const std::function<void(const std::string&)>& token_callback
+    );
+
+    void generate_stream_history(
+        const std::vector<ChatTurn>& history,
         const std::function<void(const std::string&)>& token_callback
     );
 
@@ -39,6 +48,7 @@ private:
     KofuEngine();
     ~KofuEngine();
 
+    mutable std::mutex engine_mutex_;
     std::unique_ptr<ModelLoader> loader_;
     std::atomic<bool> is_cancelled_{false};
     std::atomic<bool> is_generating_{false};

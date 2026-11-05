@@ -42,10 +42,15 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Settings
+import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.font.FontFamily
+import com.kofu.assistant.repository.TurnMessage
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
@@ -214,7 +219,12 @@ fun ChatScreen(
                 var accumulatedText = ""
                 var isFirstChunk = true
 
-                repository.generateResponseStream(userMsgText).collect { chunk ->
+                // Kofu v2.0: Memoria multi-turno completa de la conversación
+                val historyTurns = messages
+                    .filter { !it.isPending && it.text.isNotBlank() }
+                    .map { TurnMessage(if (it.sender == MessageSender.USER) "user" else "model", it.text) }
+
+                repository.generateChatStream(historyTurns).collect { chunk ->
                     if (isFirstChunk) {
                         isFirstChunk = false
                         accumulatedText = ""
@@ -439,23 +449,30 @@ fun ChatScreen(
 
                         val canSend = inputText.isNotBlank() && !isSending && serverReady
                         val currentBtnColor by animateColorAsState(
-                            targetValue = if (canSend) sendBtnColor else sendBtnDisabled,
+                            targetValue = if (isSending) colors.accent else if (canSend) sendBtnColor else sendBtnDisabled,
                             animationSpec = tween(250),
                             label = "sendBtn"
                         )
 
                         IconButton(
-                            onClick = { sendMessage(inputText) },
-                            enabled = canSend,
+                            onClick = {
+                                if (isSending) {
+                                    repository.cancelGeneration()
+                                    isSending = false
+                                } else if (canSend) {
+                                    sendMessage(inputText)
+                                }
+                            },
+                            enabled = isSending || canSend,
                             modifier = Modifier
                                 .size(46.dp)
                                 .clip(CircleShape)
                                 .background(currentBtnColor)
                         ) {
                             Icon(
-                                imageVector = Icons.AutoMirrored.Filled.Send,
-                                contentDescription = "Enviar mensaje",
-                                tint = if (canSend) colors.sendButtonText else onSurfaceSecondary,
+                                imageVector = if (isSending) Icons.Default.Close else Icons.AutoMirrored.Filled.Send,
+                                contentDescription = if (isSending) "Detener generación" else "Enviar mensaje",
+                                tint = if (isSending || canSend) colors.sendButtonText else onSurfaceSecondary,
                                 modifier = Modifier.size(20.dp)
                             )
                         }
@@ -981,11 +998,11 @@ fun ChatBubble(
                         color = userBubbleText.copy(alpha = 0.78f)
                     )
                     Spacer(modifier = Modifier.height(3.dp))
-                    Text(
+                    FormattedMessageContent(
                         text = message.text,
-                        fontSize = 14.sp,
-                        lineHeight = 20.sp,
-                        color = userBubbleText
+                        textColor = userBubbleText,
+                        isPending = false,
+                        pulseAlpha = 1.0f
                     )
                 }
             }
@@ -1003,7 +1020,7 @@ fun ChatBubble(
 
             Box(
                 modifier = Modifier
-                    .widthIn(max = 320.dp)
+                    .widthIn(max = 330.dp)
                     .clip(
                         RoundedCornerShape(
                             topStart = 20.dp,
@@ -1037,22 +1054,117 @@ fun ChatBubble(
                                 .background(accentColor)
                         )
                         Text(
-                            text = "Kofu",
+                            text = "Kofu v2.0",
                             fontWeight = FontWeight.Bold,
                             fontSize = 11.sp,
                             color = accentColor
                         )
                     }
                     Spacer(modifier = Modifier.height(4.dp))
-                    Text(
+                    FormattedMessageContent(
                         text = message.text,
-                        fontSize = 14.sp,
-                        color = kofuTextColor,
-                        lineHeight = 20.sp,
-                        fontWeight = if (message.isPending) FontWeight.Light else FontWeight.Normal,
-                        modifier = if (message.isPending) Modifier.alpha(pulseAlpha) else Modifier
+                        textColor = kofuTextColor,
+                        isPending = message.isPending,
+                        pulseAlpha = pulseAlpha
                     )
                 }
+            }
+        }
+    }
+}
+
+/**
+ * Renderizador de texto enriquecido y bloques de código Markdown con botón para copiar.
+ */
+@Composable
+fun FormattedMessageContent(
+    text: String,
+    textColor: Color,
+    isPending: Boolean,
+    pulseAlpha: Float
+) {
+    val clipboard = LocalClipboardManager.current
+    val codeBlockRegex = remember { Regex("```([a-zA-Z0-9_-]*)\\n?([\\s\\S]*?)```") }
+
+    if (!text.contains("```")) {
+        Text(
+            text = text,
+            fontSize = 14.sp,
+            color = textColor,
+            lineHeight = 20.sp,
+            fontWeight = if (isPending) FontWeight.Light else FontWeight.Normal,
+            modifier = if (isPending) Modifier.alpha(pulseAlpha) else Modifier
+        )
+        return
+    }
+
+    val matches = codeBlockRegex.findAll(text).toList()
+    var lastIndex = 0
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        for (match in matches) {
+            val preText = text.substring(lastIndex, match.range.first).trim()
+            if (preText.isNotEmpty()) {
+                Text(
+                    text = preText,
+                    fontSize = 14.sp,
+                    color = textColor,
+                    lineHeight = 20.sp
+                )
+            }
+            val lang = match.groupValues[1].ifBlank { "código" }
+            val code = match.groupValues[2].trimEnd()
+
+            Surface(
+                shape = RoundedCornerShape(8.dp),
+                color = Color(0xFF1E1E2E),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Column(modifier = Modifier.padding(10.dp)) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = lang.uppercase(),
+                            color = Color(0xFF89B4FA),
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.Bold
+                        )
+                        Text(
+                            text = "Copiar",
+                            color = Color(0xFFA6ADC8),
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(4.dp))
+                                .clickable {
+                                    clipboard.setText(AnnotatedString(code))
+                                }
+                                .padding(horizontal = 6.dp, vertical = 2.dp)
+                        )
+                    }
+                    Spacer(modifier = Modifier.height(4.dp))
+                    Text(
+                        text = code,
+                        color = Color(0xFFCDD6F4),
+                        fontSize = 12.sp,
+                        lineHeight = 16.sp,
+                        fontFamily = FontFamily.Monospace
+                    )
+                }
+            }
+            lastIndex = match.range.last + 1
+        }
+        if (lastIndex < text.length) {
+            val postText = text.substring(lastIndex).trim()
+            if (postText.isNotEmpty()) {
+                Text(
+                    text = postText,
+                    fontSize = 14.sp,
+                    color = textColor,
+                    lineHeight = 20.sp
+                )
             }
         }
     }
