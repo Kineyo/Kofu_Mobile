@@ -1,7 +1,7 @@
 # Proyecto Kofu [Mobile] 🤖
 
 <p align="center">
-  <img src="assets/banner.jpeg" alt="Proyecto Kofu Mobile Banner" width="90%" style="border-radius: 14px; box-shadow: 0 10px 30px rgba(0,0,0,0.15);">
+  <img src="assets/images/banner.jpeg" alt="Proyecto Kofu Mobile Banner" width="90%" style="border-radius: 14px; box-shadow: 0 10px 30px rgba(0,0,0,0.15);">
 </p>
 
 <p align="center">
@@ -24,7 +24,7 @@
 A diferencia de clientes de chat convencionales que se conectan a APIs externas (como ChatGPT o Claude) o soluciones que requieren instalar entornos Linux complejos (como Termux o PRoot), **Kofu Mobile ejecuta modelos de lenguaje de última generación optimizados para dispositivos móviles (Edge LLMs de 1B a 2.5B de parámetros) directamente sobre el procesador, GPU o NPU de tu teléfono**. Una vez descargado el modelo, puedes dialogar con Kofu incluso en **Modo Avión**.
 
 <p align="center">
-  <img src="assets/kofu_character_v2.png" alt="Personaje Kofu" width="280px" style="border-radius: 12px; margin: 10px;">
+  <img src="assets/images/kofu_character.png" alt="Personaje Kofu" width="280px" style="border-radius: 12px; margin: 10px;">
 </p>
 
 ---
@@ -111,9 +111,13 @@ Al enviar un prompt:
 ```text
 Kofu_Mobile/
 ├── assets/
-│   ├── banner.jpeg                  # Banner horizontal del proyecto
-│   ├── banner_kofu_hf.jpg           # Banner oficial en Hugging Face
-│   └── kofu_character_v2.png        # Arte del personaje Kofu
+│   ├── images/
+│   │   ├── banner.jpeg              # Banner horizontal del proyecto
+│   │   └── kofu_character.png       # Arte del personaje Kofu
+│   └── huggingface/
+│       ├── banner.jpg               # Banner oficial para Hugging Face Hub
+│       ├── README.md                # Model Card oficial para HF Hub
+│       └── LICENSE.txt              # Términos de licencia Gemma
 ├── Kofu_Assistant/
 │   └── app/
 │       ├── build.gradle.kts         # Configuración NDK 26, CMake 3.22 y AAPT noCompress
