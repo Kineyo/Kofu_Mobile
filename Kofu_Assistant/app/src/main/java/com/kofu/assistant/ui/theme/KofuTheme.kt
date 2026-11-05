@@ -12,17 +12,17 @@ import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
 
-enum class KofuThemeMode(val label: String, val icon: String) {
-    LIGHT("Claro", "☀️"),
-    DARK("Oscuro", "🌙"),
-    OLED_BLACK("OLED Negro", "🖤"),
-    SYSTEM("Sistema", "⚙️")
+enum class KofuThemeMode(val label: String) {
+    DARK("Oscuro"),
+    OLED_BLACK("OLED Negro"),
+    LIGHT("Claro"),
+    SYSTEM("Sistema")
 }
 
 enum class KofuFontScale(val label: String, val bodySp: Float, val codeSp: Float) {
-    COMPACT("Compacto", 13f, 11f),
-    STANDARD("Estándar", 15f, 13f),
-    LARGE("Grande", 17f, 15f)
+    COMPACT("Compacto", 12.5f, 11f),
+    STANDARD("Estándar", 14f, 12f),
+    LARGE("Grande", 15.5f, 13.5f)
 }
 
 data class KofuColors(
@@ -57,112 +57,114 @@ data class KofuColors(
     val isDark: Boolean
 )
 
+// Tema formal en negro profundo (Obsidian Monochrome)
 val DarkKofuColors = KofuColors(
-    background = Color(0xFF0D0F18),
-    surface = Color(0xFF131724),
-    surfaceVariant = Color(0xFF1A1F30),
-    surfaceElevated = Color(0xFF22283D),
-    onSurface = Color(0xFFF1F5F9),
-    onSurfaceSecondary = Color(0xFF94A3B8),
-    onSurfaceMuted = Color(0xFF64748B),
-    userBubble = Color(0xFF6D28D9),
-    userBubbleText = Color(0xFFF8FAFC),
-    kofuBubble = Color(0xFF151928),
-    kofuBubbleBorder = Color(0xFF262D42),
-    kofuText = Color(0xFFE2E8F0),
-    inputBackground = Color(0xFF151928),
-    inputBorder = Color(0xFF2B334B),
-    inputBorderFocused = Color(0xFF8B5CF6),
-    accent = Color(0xFF8B5CF6),
-    accentSecondary = Color(0xFFA78BFA),
-    accentSoft = Color(0xFF2E1D59),
-    warningAccent = Color(0xFFF59E0B),
-    errorAccent = Color(0xFFEF4444),
-    successAccent = Color(0xFF10B981),
-    sendButton = Color(0xFF8B5CF6),
-    sendButtonText = Color(0xFFFFFFFF),
-    sendButtonDisabled = Color(0xFF252A3C),
-    headerOverlay = Color(0xFF0D0F18),
-    divider = Color(0xFF22283A),
-    codeBlockBackground = Color(0xFF0A0C13),
-    codeBlockBorder = Color(0xFF2A3147),
-    isDark = true
-)
-
-// Modo OLED Pure Black especial para pantallas AMOLED de alta gama (Samsung S21+, etc.)
-val OledBlackKofuColors = KofuColors(
-    background = Color(0xFF000000),
-    surface = Color(0xFF090A0E),
-    surfaceVariant = Color(0xFF12141A),
-    surfaceElevated = Color(0xFF1A1D26),
-    onSurface = Color(0xFFF8FAFC),
-    onSurfaceSecondary = Color(0xFFA1A1AA),
-    onSurfaceMuted = Color(0xFF71717A),
-    userBubble = Color(0xFF6D28D9),
+    background = Color(0xFF070709),
+    surface = Color(0xFF0F0F12),
+    surfaceVariant = Color(0xFF15151A),
+    surfaceElevated = Color(0xFF1C1C22),
+    onSurface = Color(0xFFEEEEF2),
+    onSurfaceSecondary = Color(0xFF90929C),
+    onSurfaceMuted = Color(0xFF5A5C66),
+    userBubble = Color(0xFF1E2028),
     userBubbleText = Color(0xFFFFFFFF),
-    kofuBubble = Color(0xFF0D0E14),
-    kofuBubbleBorder = Color(0xFF27272A),
-    kofuText = Color(0xFFE4E4E7),
-    inputBackground = Color(0xFF0A0B10),
-    inputBorder = Color(0xFF27272A),
-    inputBorderFocused = Color(0xFF8B5CF6),
-    accent = Color(0xFF8B5CF6),
-    accentSecondary = Color(0xFFA78BFA),
-    accentSoft = Color(0xFF241547),
-    warningAccent = Color(0xFFFBBF24),
-    errorAccent = Color(0xFFF87171),
-    successAccent = Color(0xFF34D399),
-    sendButton = Color(0xFF8B5CF6),
-    sendButtonText = Color(0xFFFFFFFF),
-    sendButtonDisabled = Color(0xFF1F2129),
-    headerOverlay = Color(0xFF000000),
-    divider = Color(0xFF1E2028),
-    codeBlockBackground = Color(0xFF050508),
-    codeBlockBorder = Color(0xFF22242E),
-    isDark = true
-)
-
-val LightKofuColors = KofuColors(
-    background = Color(0xFFF8FAFC),
-    surface = Color(0xFFFFFFFF),
-    surfaceVariant = Color(0xFFF1F5F9),
-    surfaceElevated = Color(0xFFFFFFFF),
-    onSurface = Color(0xFF0F172A),
-    onSurfaceSecondary = Color(0xFF64748B),
-    onSurfaceMuted = Color(0xFF94A3B8),
-    userBubble = Color(0xFF6D28D9),
-    userBubbleText = Color(0xFFFFFFFF),
-    kofuBubble = Color(0xFFFFFFFF),
-    kofuBubbleBorder = Color(0xFFE2E8F0),
-    kofuText = Color(0xFF1E293B),
-    inputBackground = Color(0xFFF1F5F9),
-    inputBorder = Color(0xFFCBD5E1),
-    inputBorderFocused = Color(0xFF6D28D9),
-    accent = Color(0xFF6D28D9),
-    accentSecondary = Color(0xFF7C3AED),
-    accentSoft = Color(0xFFEDE9FE),
+    kofuBubble = Color(0xFF0D0D10),
+    kofuBubbleBorder = Color(0xFF202026),
+    kofuText = Color(0xFFE2E4EC),
+    inputBackground = Color(0xFF0B0B0E),
+    inputBorder = Color(0xFF22222A),
+    inputBorderFocused = Color(0xFF4C5062),
+    accent = Color(0xFFEEEEF2),
+    accentSecondary = Color(0xFFA0A4B8),
+    accentSoft = Color(0xFF1E202A),
     warningAccent = Color(0xFFD97706),
     errorAccent = Color(0xFFDC2626),
-    successAccent = Color(0xFF059669),
-    sendButton = Color(0xFF6D28D9),
+    successAccent = Color(0xFF10B981),
+    sendButton = Color(0xFFEEEEF2),
+    sendButtonText = Color(0xFF070709),
+    sendButtonDisabled = Color(0xFF1E1E24),
+    headerOverlay = Color(0xFF070709),
+    divider = Color(0xFF18181E),
+    codeBlockBackground = Color(0xFF050507),
+    codeBlockBorder = Color(0xFF1F1F26),
+    isDark = true
+)
+
+// Tema OLED Pure Black (100% negro absoluto para paneles AMOLED)
+val OledBlackKofuColors = KofuColors(
+    background = Color(0xFF000000),
+    surface = Color(0xFF08080A),
+    surfaceVariant = Color(0xFF101014),
+    surfaceElevated = Color(0xFF17171C),
+    onSurface = Color(0xFFF4F4F6),
+    onSurfaceSecondary = Color(0xFF8E909A),
+    onSurfaceMuted = Color(0xFF555760),
+    userBubble = Color(0xFF18181E),
+    userBubbleText = Color(0xFFFFFFFF),
+    kofuBubble = Color(0xFF070709),
+    kofuBubbleBorder = Color(0xFF1D1D24),
+    kofuText = Color(0xFFE0E2EA),
+    inputBackground = Color(0xFF050507),
+    inputBorder = Color(0xFF1E1E24),
+    inputBorderFocused = Color(0xFF484B58),
+    accent = Color(0xFFFFFFFF),
+    accentSecondary = Color(0xFF989BAC),
+    accentSoft = Color(0xFF16161C),
+    warningAccent = Color(0xFFD97706),
+    errorAccent = Color(0xFFDC2626),
+    successAccent = Color(0xFF10B981),
+    sendButton = Color(0xFFFFFFFF),
+    sendButtonText = Color(0xFF000000),
+    sendButtonDisabled = Color(0xFF16161A),
+    headerOverlay = Color(0xFF000000),
+    divider = Color(0xFF141418),
+    codeBlockBackground = Color(0xFF030304),
+    codeBlockBorder = Color(0xFF1A1A20),
+    isDark = true
+)
+
+// Tema Claro sobrio y formal
+val LightKofuColors = KofuColors(
+    background = Color(0xFFF6F7F9),
+    surface = Color(0xFFFFFFFF),
+    surfaceVariant = Color(0xFFEEEEF2),
+    surfaceElevated = Color(0xFFFFFFFF),
+    onSurface = Color(0xFF111216),
+    onSurfaceSecondary = Color(0xFF5C5E68),
+    onSurfaceMuted = Color(0xFF8B8E9A),
+    userBubble = Color(0xFF18191E),
+    userBubbleText = Color(0xFFFFFFFF),
+    kofuBubble = Color(0xFFFFFFFF),
+    kofuBubbleBorder = Color(0xFFE0E2EA),
+    kofuText = Color(0xFF18191E),
+    inputBackground = Color(0xFFFFFFFF),
+    inputBorder = Color(0xFFD4D6E0),
+    inputBorderFocused = Color(0xFF18191E),
+    accent = Color(0xFF18191E),
+    accentSecondary = Color(0xFF383A46),
+    accentSoft = Color(0xFFE8E9F0),
+    warningAccent = Color(0xFFB45309),
+    errorAccent = Color(0xFFB91C1C),
+    successAccent = Color(0xFF047857),
+    sendButton = Color(0xFF18191E),
     sendButtonText = Color(0xFFFFFFFF),
-    sendButtonDisabled = Color(0xFFE2E8F0),
-    headerOverlay = Color(0xFFF8FAFC),
-    divider = Color(0xFFE2E8F0),
-    codeBlockBackground = Color(0xFFF8FAFC),
-    codeBlockBorder = Color(0xFFCBD5E1),
+    sendButtonDisabled = Color(0xFFE0E2EA),
+    headerOverlay = Color(0xFFF6F7F9),
+    divider = Color(0xFFE5E7EE),
+    codeBlockBackground = Color(0xFFF0F1F5),
+    codeBlockBorder = Color(0xFFD4D6E0),
     isDark = false
 )
 
 object KofuDesignSystem {
-    // Bordes modernos menos redondeados (8dp - 12dp en lugar de 50dp pills)
-    val ButtonShape = RoundedCornerShape(8.dp)
-    val PillShape = RoundedCornerShape(8.dp)
-    val CardShape = RoundedCornerShape(12.dp)
-    val InputShape = RoundedCornerShape(10.dp)
-    val DialogShape = RoundedCornerShape(14.dp)
-    val UserBubbleShape = RoundedCornerShape(12.dp, 12.dp, 3.dp, 12.dp)
-    val KofuBubbleShape = RoundedCornerShape(12.dp, 12.dp, 12.dp, 3.dp)
+    // Bordes formales, arquitectónicos y compactos (6dp a 8dp)
+    val ButtonShape = RoundedCornerShape(6.dp)
+    val PillShape = RoundedCornerShape(6.dp)
+    val CardShape = RoundedCornerShape(8.dp)
+    val InputShape = RoundedCornerShape(8.dp)
+    val DialogShape = RoundedCornerShape(10.dp)
+    val UserBubbleShape = RoundedCornerShape(8.dp, 8.dp, 2.dp, 8.dp)
+    val KofuBubbleShape = RoundedCornerShape(8.dp, 8.dp, 8.dp, 2.dp)
 }
 
 val LocalKofuColors = staticCompositionLocalOf { DarkKofuColors }
@@ -170,7 +172,7 @@ val LocalKofuFontScale = staticCompositionLocalOf { KofuFontScale.STANDARD }
 
 @Composable
 fun KofuTheme(
-    themeMode: KofuThemeMode = KofuThemeMode.SYSTEM,
+    themeMode: KofuThemeMode = KofuThemeMode.DARK,
     fontScale: KofuFontScale = KofuFontScale.STANDARD,
     content: @Composable () -> Unit
 ) {
@@ -189,7 +191,7 @@ fun KofuTheme(
             background = kofuColors.background,
             surface = kofuColors.surface,
             surfaceVariant = kofuColors.surfaceVariant,
-            onPrimary = Color.White,
+            onPrimary = Color.Black,
             onBackground = kofuColors.onSurface,
             onSurface = kofuColors.onSurface,
             error = kofuColors.errorAccent
@@ -208,12 +210,12 @@ fun KofuTheme(
         )
     }
 
-    val modernShapes = Shapes(
-        extraSmall = RoundedCornerShape(6.dp),
-        small = RoundedCornerShape(8.dp),
-        medium = RoundedCornerShape(10.dp),
-        large = RoundedCornerShape(12.dp),
-        extraLarge = RoundedCornerShape(16.dp)
+    val formalShapes = Shapes(
+        extraSmall = RoundedCornerShape(4.dp),
+        small = RoundedCornerShape(6.dp),
+        medium = RoundedCornerShape(8.dp),
+        large = RoundedCornerShape(10.dp),
+        extraLarge = RoundedCornerShape(12.dp)
     )
 
     CompositionLocalProvider(
@@ -222,7 +224,7 @@ fun KofuTheme(
     ) {
         MaterialTheme(
             colorScheme = materialColorScheme,
-            shapes = modernShapes,
+            shapes = formalShapes,
             content = content
         )
     }

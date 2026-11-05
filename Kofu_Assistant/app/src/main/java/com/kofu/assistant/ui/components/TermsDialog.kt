@@ -1,6 +1,5 @@
 package com.kofu.assistant.ui.components
 
-import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -17,9 +16,6 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
-import androidx.compose.material.icons.filled.Info
-import androidx.compose.material.icons.filled.Lock
-import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.HorizontalDivider
@@ -31,8 +27,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -67,106 +62,77 @@ fun TermsDialog(
             Column(
                 modifier = Modifier
                     .fillMaxSize()
-                    .padding(16.dp)
+                    .padding(14.dp)
             ) {
-                // CABECERA FIJA
+                // CABECERA FORMAL
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.SpaceBetween
                 ) {
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(10.dp)
-                    ) {
-                        Surface(
-                            color = colors.accentSoft,
-                            shape = KofuDesignSystem.ButtonShape,
-                            modifier = Modifier.size(36.dp)
-                        ) {
-                            Box(contentAlignment = Alignment.Center) {
-                                Icon(
-                                    imageVector = Icons.Default.Info,
-                                    contentDescription = null,
-                                    tint = colors.accent,
-                                    modifier = Modifier.size(20.dp)
-                                )
-                            }
-                        }
-                        Column {
-                            Text(
-                                text = "Términos y Privacidad",
-                                fontWeight = FontWeight.Bold,
-                                color = colors.onSurface,
-                                fontSize = 17.sp
-                            )
-                            Text(
-                                text = "Kofu Assistant • Licencia Gemma",
-                                color = colors.onSurfaceSecondary,
-                                fontSize = 11.sp
-                            )
-                        }
+                    Column {
+                        Text(
+                            text = "TÉRMINOS Y PRIVACIDAD",
+                            fontWeight = FontWeight.Black,
+                            fontFamily = FontFamily.Monospace,
+                            color = colors.onSurface,
+                            fontSize = 13.sp,
+                            letterSpacing = 1.sp
+                        )
+                        Text(
+                            text = "Kofu Assistant • Licencia Gemma",
+                            color = colors.onSurfaceSecondary,
+                            fontSize = 11.sp
+                        )
                     }
 
                     IconButton(
                         onClick = onDismiss,
-                        modifier = Modifier.size(32.dp)
+                        modifier = Modifier.size(28.dp)
                     ) {
                         Icon(
                             imageVector = Icons.Default.Close,
                             contentDescription = "Cerrar",
                             tint = colors.onSurfaceSecondary,
-                            modifier = Modifier.size(18.dp)
+                            modifier = Modifier.size(16.dp)
                         )
                     }
                 }
 
-                Spacer(modifier = Modifier.height(10.dp))
+                Spacer(modifier = Modifier.height(8.dp))
                 HorizontalDivider(color = colors.divider, thickness = 1.dp)
-                Spacer(modifier = Modifier.height(10.dp))
+                Spacer(modifier = Modifier.height(8.dp))
 
-                // CONTENIDO DESPLAZABLE
+                // CONTENIDO DESPLAZABLE FORMAL
                 Column(
                     modifier = Modifier
                         .weight(1f)
                         .fillMaxWidth()
                         .verticalScroll(scrollState),
-                    verticalArrangement = Arrangement.spacedBy(14.dp)
+                    verticalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
-                    // Section 1: Privacidad 100% Local
-                    TermCard(
-                        icon = Icons.Default.Lock,
-                        iconTint = colors.successAccent,
-                        title = "1. Privacidad y Soberanía Local",
-                        content = "Kofu procesa tus conversaciones exclusivamente de manera local en tu dispositivo o a través de tu servidor Ollama privado en tu red doméstica. Ningún mensaje, prompt, dato personal o telemetría se transmite a la nube ni a servidores externos de terceros. Eres el dueño absoluto de tu información."
+                    FormalTermCard(
+                        title = "1. PRIVACIDAD Y SOBERANÍA LOCAL",
+                        content = "Kofu procesa tus conversaciones exclusivamente de manera local en el dispositivo o a través de tu servidor Ollama en red privada. Ningún mensaje, prompt, metadato o dato personal se transmite a la nube ni a servidores externos de terceros. Los datos permanecen estrictamente bajo el control del usuario."
                     )
 
-                    // Section 2: Términos y Licencia de Google Gemma
-                    TermCard(
-                        icon = Icons.Default.Info,
-                        iconTint = colors.accent,
-                        title = "2. Modelo Base y Términos Gemma",
-                        content = "Kofu está construido y optimizado sobre la familia de modelos abiertos Gemma de Google DeepMind. El uso de los pesos y las inferencias está sujeto a los Términos de Uso de Gemma (Gemma Terms of Use) y la Licencia Apache 2.0 en componentes de software libre aplicables. Queda garantizado el derecho a uso personal, educativo y comercial conforme a dichos términos."
+                    FormalTermCard(
+                        title = "2. MODELO BASE Y LICENCIA GEMMA",
+                        content = "Kofu está optimizado sobre la familia de modelos abiertos Gemma de Google DeepMind. El uso de los pesos e inferencias está sujeto a los Términos de Uso de Gemma (Gemma Terms of Use) y la Licencia Apache 2.0 en componentes de software libre aplicables. Queda garantizado el derecho a uso personal, educativo y comercial conforme a dichos términos."
                     )
 
-                    // Section 3: Política de Uso Prohibido y Responsable
-                    TermCard(
-                        icon = Icons.Default.Warning,
-                        iconTint = colors.warningAccent,
-                        title = "3. Política de Uso Prohibido",
+                    FormalTermCard(
+                        title = "3. POLÍTICA DE USO PROHIBIDO",
                         content = "De conformidad con los lineamientos de Google DeepMind y las directrices de IA responsable, está estrictamente prohibido utilizar Kofu para:\n" +
                                 "• Generar contenido ilícito, violento, acoso o incitación al odio.\n" +
-                                "• Crear código malicioso, exploits o ciberataques contra sistemas ajenos.\n" +
-                                "• Difundir desinformación deliberada o material médico/financiero sin validación experta.\n" +
+                                "• Desarrollar código malicioso, exploits o ataques contra infraestructura ajena.\n" +
+                                "• Difundir desinformación deliberada o asesoramiento médico/financiero crítico sin validación profesional.\n" +
                                 "• Infringir derechos de privacidad o propiedad intelectual de terceros."
                     )
 
-                    // Section 4: Exención de Responsabilidad
-                    TermCard(
-                        icon = Icons.Default.Info,
-                        iconTint = colors.onSurfaceSecondary,
-                        title = "4. Exención de Responsabilidad",
-                        content = "Las respuestas son generadas por modelos probabilísticos de lenguaje y pueden contener imprecisiones. El usuario debe evaluar la exactitud y adecuación de las respuestas antes de tomar decisiones críticas. Kofu Assistant se proporciona 'tal cual', sin garantías implícitas."
+                    FormalTermCard(
+                        title = "4. EXENCIÓN DE RESPONSABILIDAD",
+                        content = "Las respuestas son generadas por modelos probabilísticos de lenguaje y pueden contener imprecisiones. El usuario debe evaluar la exactitud y adecuación de las respuestas antes de tomar decisiones técnicas o críticas. Kofu Assistant se proporciona 'tal cual', sin garantías implícitas."
                     )
 
                     HorizontalDivider(color = colors.divider, thickness = 1.dp)
@@ -178,16 +144,16 @@ fun TermsDialog(
                         Text(
                             text = "Kofu Assistant v2.0 • Build Edge 2026",
                             color = colors.onSurfaceMuted,
-                            fontSize = 11.sp,
-                            fontWeight = FontWeight.Medium
+                            fontSize = 10.sp,
+                            fontFamily = FontFamily.Monospace
                         )
                     }
                 }
 
-                // PIE FIJO CON BOTÓN
-                Spacer(modifier = Modifier.height(10.dp))
+                // PIE FIJO
+                Spacer(modifier = Modifier.height(8.dp))
                 HorizontalDivider(color = colors.divider, thickness = 1.dp)
-                Spacer(modifier = Modifier.height(10.dp))
+                Spacer(modifier = Modifier.height(8.dp))
 
                 Button(
                     onClick = onDismiss,
@@ -199,8 +165,8 @@ fun TermsDialog(
                     modifier = Modifier.fillMaxWidth()
                 ) {
                     Text(
-                        text = "Aceptar y Continuar",
-                        fontSize = 14.sp,
+                        text = "Aceptar",
+                        fontSize = 13.sp,
                         fontWeight = FontWeight.Bold
                     )
                 }
@@ -210,9 +176,7 @@ fun TermsDialog(
 }
 
 @Composable
-private fun TermCard(
-    icon: ImageVector,
-    iconTint: Color,
+private fun FormalTermCard(
     title: String,
     content: String
 ) {
@@ -227,32 +191,23 @@ private fun TermCard(
             .border(1.dp, colors.divider, KofuDesignSystem.CardShape)
     ) {
         Column(
-            modifier = Modifier.padding(12.dp),
-            verticalArrangement = Arrangement.spacedBy(6.dp)
+            modifier = Modifier.padding(10.dp),
+            verticalArrangement = Arrangement.spacedBy(4.dp)
         ) {
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                Icon(
-                    imageVector = icon,
-                    contentDescription = null,
-                    tint = iconTint,
-                    modifier = Modifier.size(16.dp)
-                )
-                Text(
-                    text = title,
-                    fontWeight = FontWeight.Bold,
-                    color = colors.onSurface,
-                    fontSize = 13.sp
-                )
-            }
+            Text(
+                text = title,
+                fontWeight = FontWeight.Bold,
+                fontFamily = FontFamily.Monospace,
+                color = colors.onSurface,
+                fontSize = 11.sp,
+                letterSpacing = 0.5.sp
+            )
 
             Text(
                 text = content,
                 color = colors.onSurfaceSecondary,
-                fontSize = 12.sp,
-                lineHeight = 17.sp
+                fontSize = 11.5.sp,
+                lineHeight = 16.sp
             )
         }
     }

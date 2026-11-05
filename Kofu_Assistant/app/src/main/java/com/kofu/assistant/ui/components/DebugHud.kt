@@ -22,7 +22,6 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
-import androidx.compose.material.icons.filled.Info
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -39,6 +38,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.kofu.assistant.repository.DebugMetrics
@@ -62,15 +62,16 @@ fun DebugHud(
         modifier = modifier
     ) {
         Surface(
-            color = colors.surface.copy(alpha = 0.95f),
+            color = colors.surface,
             shape = KofuDesignSystem.CardShape,
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 14.dp, vertical = 6.dp)
+                .padding(horizontal = 12.dp, vertical = 4.dp)
                 .clip(KofuDesignSystem.CardShape)
-                .border(1.dp, colors.accent.copy(alpha = 0.35f), KofuDesignSystem.CardShape)
+                .border(1.dp, colors.divider, KofuDesignSystem.CardShape)
         ) {
-            Column(modifier = Modifier.padding(10.dp)) {
+            Column(modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp)) {
+                // Barra superior de estado
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     verticalAlignment = Alignment.CenterVertically,
@@ -82,94 +83,115 @@ fun DebugHud(
                     ) {
                         Box(
                             modifier = Modifier
-                                .size(8.dp)
+                                .size(6.dp)
                                 .clip(KofuDesignSystem.ButtonShape)
                                 .background(colors.successAccent)
                         )
                         Text(
-                            text = "HUD DE DEPURACIÓN (LIVE)",
-                            color = colors.accent,
-                            fontSize = 11.sp,
+                            text = "TELEMETRÍA",
+                            color = colors.onSurfaceSecondary,
+                            fontSize = 10.sp,
                             fontWeight = FontWeight.Bold,
-                            letterSpacing = 0.5.sp
+                            fontFamily = FontFamily.Monospace,
+                            letterSpacing = 0.8.sp
                         )
                     }
 
-                    Row(verticalAlignment = Alignment.CenterVertically) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
                         Text(
-                            text = "Inspeccionar",
-                            color = colors.accent,
-                            fontSize = 11.sp,
-                            fontWeight = FontWeight.Medium,
+                            text = "RAW",
+                            color = colors.onSurfaceSecondary,
+                            fontSize = 10.sp,
+                            fontWeight = FontWeight.Bold,
+                            fontFamily = FontFamily.Monospace,
                             modifier = Modifier
                                 .clip(KofuDesignSystem.ButtonShape)
                                 .clickable { showRawInspector = true }
-                                .padding(horizontal = 6.dp, vertical = 2.dp)
+                                .padding(horizontal = 4.dp, vertical = 2.dp)
                         )
-                        Spacer(modifier = Modifier.width(4.dp))
-                        IconButton(
-                            onClick = onClose,
-                            modifier = Modifier.size(22.dp)
-                        ) {
-                            Icon(
-                                imageVector = Icons.Default.Close,
-                                contentDescription = "Cerrar HUD",
-                                tint = colors.onSurfaceSecondary,
-                                modifier = Modifier.size(14.dp)
-                            )
-                        }
+
+                        Icon(
+                            imageVector = Icons.Default.Close,
+                            contentDescription = "Cerrar",
+                            tint = colors.onSurfaceMuted,
+                            modifier = Modifier
+                                .size(14.dp)
+                                .clickable { onClose() }
+                        )
                     }
-                }
-
-                Spacer(modifier = Modifier.height(6.dp))
-
-                // Métricas clave en fila moderna
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween
-                ) {
-                    MetricItem(
-                        label = "Velocidad",
-                        value = if (metrics.tokensPerSec > 0) String.format("%.1f t/s", metrics.tokensPerSec) else "-- t/s"
-                    )
-                    MetricItem(
-                        label = "TTFT",
-                        value = if (metrics.latencyFirstTokenMs > 0) "${metrics.latencyFirstTokenMs} ms" else "-- ms"
-                    )
-                    MetricItem(
-                        label = "Tokens",
-                        value = "${metrics.tokensGenerated}"
-                    )
-                    MetricItem(
-                        label = "Total",
-                        value = if (metrics.totalDurationMs > 0) String.format("%.1f s", metrics.totalDurationMs / 1000.0) else "-- s"
-                    )
                 }
 
                 Spacer(modifier = Modifier.height(4.dp))
 
+                // Fila de métricas compactas en formato monospace formal
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Text(
-                        text = "Motor: ${metrics.activeBackend}",
-                        color = colors.onSurfaceSecondary,
-                        fontSize = 10.sp,
-                        fontFamily = FontFamily.Monospace,
-                        maxLines = 1,
-                        overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
-                        modifier = Modifier.weight(1f, fill = false)
+                        text = if (metrics.tokensPerSec > 0) String.format("%.1f t/s", metrics.tokensPerSec) else "-- t/s",
+                        color = colors.onSurface,
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Bold,
+                        fontFamily = FontFamily.Monospace
                     )
-                    Spacer(modifier = Modifier.width(8.dp))
+
                     Text(
-                        text = "Modelo: ${metrics.activeModel}",
+                        text = "•",
+                        color = colors.onSurfaceMuted,
+                        fontSize = 10.sp
+                    )
+
+                    Text(
+                        text = if (metrics.latencyFirstTokenMs > 0) "${metrics.latencyFirstTokenMs}ms" else "-- ms",
                         color = colors.onSurfaceSecondary,
+                        fontSize = 11.sp,
+                        fontFamily = FontFamily.Monospace
+                    )
+
+                    Text(
+                        text = "•",
+                        color = colors.onSurfaceMuted,
+                        fontSize = 10.sp
+                    )
+
+                    Text(
+                        text = "${metrics.tokensGenerated} tok",
+                        color = colors.onSurfaceSecondary,
+                        fontSize = 11.sp,
+                        fontFamily = FontFamily.Monospace
+                    )
+
+                    Text(
+                        text = "•",
+                        color = colors.onSurfaceMuted,
+                        fontSize = 10.sp
+                    )
+
+                    Text(
+                        text = if (metrics.totalDurationMs > 0) String.format("%.1fs", metrics.totalDurationMs / 1000.0) else "-- s",
+                        color = colors.onSurfaceSecondary,
+                        fontSize = 11.sp,
+                        fontFamily = FontFamily.Monospace
+                    )
+
+                    Text(
+                        text = "•",
+                        color = colors.onSurfaceMuted,
+                        fontSize = 10.sp
+                    )
+
+                    Text(
+                        text = metrics.activeModel.ifEmpty { "Inactivo" },
+                        color = colors.accentSecondary,
                         fontSize = 10.sp,
                         fontFamily = FontFamily.Monospace,
                         maxLines = 1,
-                        overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
+                        overflow = TextOverflow.Ellipsis
                     )
                 }
             }
@@ -181,9 +203,11 @@ fun DebugHud(
             onDismissRequest = { showRawInspector = false },
             title = {
                 Text(
-                    text = "Inspección de Inferencia",
+                    text = "Inspección Raw",
                     fontWeight = FontWeight.Bold,
-                    color = colors.onSurface
+                    color = colors.onSurface,
+                    fontSize = 15.sp,
+                    fontFamily = FontFamily.Monospace
                 )
             },
             text = {
@@ -191,15 +215,16 @@ fun DebugHud(
                 Column(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .height(350.dp)
+                        .height(320.dp)
                         .verticalScroll(scroll),
                     verticalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
                     Text(
-                        text = "PROMPT MULTI-TURNO COMPILADO:",
-                        color = colors.accent,
-                        fontSize = 11.sp,
-                        fontWeight = FontWeight.Bold
+                        text = "PROMPT ENVIADO",
+                        color = colors.onSurfaceSecondary,
+                        fontSize = 10.sp,
+                        fontWeight = FontWeight.Bold,
+                        fontFamily = FontFamily.Monospace
                     )
                     Surface(
                         color = colors.codeBlockBackground,
@@ -220,10 +245,11 @@ fun DebugHud(
                     Spacer(modifier = Modifier.height(6.dp))
 
                     Text(
-                        text = "ÚLTIMA RESPUESTA RECIBIDA:",
-                        color = colors.accent,
-                        fontSize = 11.sp,
-                        fontWeight = FontWeight.Bold
+                        text = "RESPUESTA RAW",
+                        color = colors.onSurfaceSecondary,
+                        fontSize = 10.sp,
+                        fontWeight = FontWeight.Bold,
+                        fontFamily = FontFamily.Monospace
                     )
                     Surface(
                         color = colors.codeBlockBackground,
@@ -244,25 +270,11 @@ fun DebugHud(
             },
             confirmButton = {
                 TextButton(onClick = { showRawInspector = false }) {
-                    Text("Cerrar", color = colors.accent)
+                    Text("Cerrar", color = colors.onSurface, fontSize = 12.sp)
                 }
             },
-            containerColor = colors.surface
-        )
-    }
-}
-
-@Composable
-private fun MetricItem(label: String, value: String) {
-    val colors = LocalKofuColors.current
-    Column {
-        Text(text = label, color = colors.onSurfaceMuted, fontSize = 9.sp)
-        Text(
-            text = value,
-            color = colors.onSurface,
-            fontSize = 12.sp,
-            fontWeight = FontWeight.Bold,
-            fontFamily = FontFamily.Monospace
+            containerColor = colors.surface,
+            shape = KofuDesignSystem.DialogShape
         )
     }
 }

@@ -5,7 +5,6 @@ import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.shrinkVertically
-import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -28,7 +27,6 @@ import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Refresh
-import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
@@ -96,9 +94,9 @@ fun SettingsDialog(
         repository.probeOllama(scope) { success ->
             testConnectionInProgress = false
             connectionFeedback = if (success) {
-                "🟢 Conectado: ${repository.ollamaAvailableModels.size} modelo(s) detectado(s)"
+                "Conectado: ${repository.ollamaAvailableModels.size} modelo(s) en servidor"
             } else {
-                "🔴 Sin conexión con el servidor Ollama"
+                "Sin respuesta del servidor Ollama"
             }
             repository.savePreferences(context)
         }
@@ -120,74 +118,57 @@ fun SettingsDialog(
             Column(
                 modifier = Modifier
                     .fillMaxSize()
-                    .padding(16.dp)
+                    .padding(14.dp)
             ) {
-                // CABECERA FIJA
+                // CABECERA FORMAL Y COMPACTA
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.SpaceBetween
                 ) {
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(10.dp)
-                    ) {
-                        Surface(
-                            color = colors.accentSoft,
-                            shape = KofuDesignSystem.ButtonShape,
-                            modifier = Modifier.size(36.dp)
-                        ) {
-                            Box(contentAlignment = Alignment.Center) {
-                                Icon(
-                                    imageVector = Icons.Default.Settings,
-                                    contentDescription = null,
-                                    tint = colors.accent,
-                                    modifier = Modifier.size(20.dp)
-                                )
-                            }
-                        }
-                        Column {
-                            Text(
-                                text = "Ajustes de Kofu",
-                                fontWeight = FontWeight.Bold,
-                                color = colors.onSurface,
-                                fontSize = 17.sp
-                            )
-                            Text(
-                                text = "Motor, inferencia y personalización",
-                                color = colors.onSurfaceSecondary,
-                                fontSize = 11.sp
-                            )
-                        }
+                    Column {
+                        Text(
+                            text = "CONFIGURACIÓN",
+                            fontWeight = FontWeight.Black,
+                            fontFamily = FontFamily.Monospace,
+                            color = colors.onSurface,
+                            fontSize = 14.sp,
+                            letterSpacing = 1.sp
+                        )
+                        Text(
+                            text = "Parámetros de inferencia y motor",
+                            color = colors.onSurfaceSecondary,
+                            fontSize = 11.sp
+                        )
                     }
 
                     IconButton(
                         onClick = onDismiss,
-                        modifier = Modifier.size(32.dp)
+                        modifier = Modifier.size(28.dp)
                     ) {
                         Icon(
                             imageVector = Icons.Default.Close,
                             contentDescription = "Cerrar",
                             tint = colors.onSurfaceSecondary,
-                            modifier = Modifier.size(18.dp)
+                            modifier = Modifier.size(16.dp)
                         )
                     }
                 }
 
-                Spacer(modifier = Modifier.height(10.dp))
+                Spacer(modifier = Modifier.height(8.dp))
                 HorizontalDivider(color = colors.divider, thickness = 1.dp)
-                Spacer(modifier = Modifier.height(10.dp))
+                Spacer(modifier = Modifier.height(8.dp))
 
-                // CONTENIDO DESPLAZABLE FLUIDO
+                // CONTENIDO DESPLAZABLE COMPACTO
                 Column(
                     modifier = Modifier
                         .weight(1f)
                         .fillMaxWidth()
                         .verticalScroll(scrollState),
-                    verticalArrangement = Arrangement.spacedBy(14.dp)
+                    verticalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
-                    // SECCIÓN 1: MOTOR & INFERENCIA
-                    SettingsSectionHeader(title = "⚙️ MOTOR DE INFERENCIA")
+                    // SECCIÓN 1: MOTOR DE INFERENCIA
+                    FormalSectionTitle(title = "MOTOR DE INFERENCIA")
 
                     Surface(
                         color = colors.surfaceVariant,
@@ -198,16 +179,9 @@ fun SettingsDialog(
                             .border(1.dp, colors.divider, KofuDesignSystem.CardShape)
                     ) {
                         Column(
-                            modifier = Modifier.padding(12.dp),
-                            verticalArrangement = Arrangement.spacedBy(10.dp)
+                            modifier = Modifier.padding(10.dp),
+                            verticalArrangement = Arrangement.spacedBy(8.dp)
                         ) {
-                            Text(
-                                text = "Modo de Inferencia",
-                                fontSize = 13.sp,
-                                fontWeight = FontWeight.SemiBold,
-                                color = colors.onSurface
-                            )
-
                             BackendMode.entries.forEach { mode ->
                                 val isSelected = repository.backendMode == mode
                                 Surface(
@@ -217,8 +191,8 @@ fun SettingsDialog(
                                         .fillMaxWidth()
                                         .clip(KofuDesignSystem.ButtonShape)
                                         .border(
-                                            width = if (isSelected) 1.5.dp else 1.dp,
-                                            color = if (isSelected) colors.accent else colors.divider,
+                                            width = 1.dp,
+                                            color = if (isSelected) colors.onSurfaceSecondary else colors.divider,
                                             shape = KofuDesignSystem.ButtonShape
                                         )
                                         .clickable {
@@ -232,13 +206,13 @@ fun SettingsDialog(
                                     Row(
                                         modifier = Modifier
                                             .fillMaxWidth()
-                                            .padding(horizontal = 10.dp, vertical = 8.dp),
+                                            .padding(horizontal = 9.dp, vertical = 7.dp),
                                         verticalAlignment = Alignment.CenterVertically,
                                         horizontalArrangement = Arrangement.SpaceBetween
                                     ) {
                                         Text(
                                             text = mode.displayName,
-                                            fontSize = 12.sp,
+                                            fontSize = 11.5.sp,
                                             fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
                                             color = colors.onSurface
                                         )
@@ -246,25 +220,26 @@ fun SettingsDialog(
                                             Icon(
                                                 imageVector = Icons.Default.Check,
                                                 contentDescription = null,
-                                                tint = colors.accent,
-                                                modifier = Modifier.size(16.dp)
+                                                tint = colors.onSurface,
+                                                modifier = Modifier.size(15.dp)
                                             )
                                         }
                                     }
                                 }
                             }
 
-                            // Configuración del servidor Ollama
+                            // Host Ollama
                             AnimatedVisibility(
                                 visible = repository.backendMode != BackendMode.LOCAL_CPP,
                                 enter = fadeIn() + expandVertically(),
                                 exit = fadeOut() + shrinkVertically()
                             ) {
-                                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
                                     Text(
-                                        text = "Dirección del Servidor Ollama (Laptop / Red):",
-                                        fontSize = 12.sp,
-                                        fontWeight = FontWeight.Medium,
+                                        text = "HOST OLLAMA",
+                                        fontSize = 10.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        fontFamily = FontFamily.Monospace,
                                         color = colors.onSurfaceSecondary
                                     )
 
@@ -277,7 +252,7 @@ fun SettingsDialog(
                                         singleLine = true,
                                         textStyle = TextStyle(
                                             fontFamily = FontFamily.Monospace,
-                                            fontSize = 13.sp,
+                                            fontSize = 12.sp,
                                             color = colors.onSurface
                                         ),
                                         shape = KofuDesignSystem.InputShape,
@@ -295,48 +270,52 @@ fun SettingsDialog(
                                         enabled = !testConnectionInProgress,
                                         shape = KofuDesignSystem.ButtonShape,
                                         colors = ButtonDefaults.buttonColors(
-                                            containerColor = colors.accentSoft,
-                                            contentColor = colors.accent
+                                            containerColor = colors.surface,
+                                            contentColor = colors.onSurface
                                         ),
-                                        modifier = Modifier.fillMaxWidth()
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .border(1.dp, colors.divider, KofuDesignSystem.ButtonShape)
                                     ) {
                                         if (testConnectionInProgress) {
                                             CircularProgressIndicator(
-                                                modifier = Modifier.size(14.dp),
+                                                modifier = Modifier.size(12.dp),
                                                 strokeWidth = 2.dp,
-                                                color = colors.accent
+                                                color = colors.onSurface
                                             )
                                             Spacer(modifier = Modifier.width(6.dp))
-                                            Text("Comprobando...", fontSize = 12.sp)
+                                            Text("Comprobando...", fontSize = 11.sp, fontFamily = FontFamily.Monospace)
                                         } else {
                                             Icon(
                                                 imageVector = Icons.Default.Refresh,
                                                 contentDescription = null,
-                                                modifier = Modifier.size(14.dp)
+                                                modifier = Modifier.size(13.dp),
+                                                tint = colors.onSurfaceSecondary
                                             )
                                             Spacer(modifier = Modifier.width(6.dp))
-                                            Text("Probar Conexión", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                                            Text("Probar Conexión", fontSize = 11.sp, fontWeight = FontWeight.Bold, fontFamily = FontFamily.Monospace)
                                         }
                                     }
 
                                     if (connectionFeedback != null) {
                                         Text(
                                             text = connectionFeedback!!,
-                                            fontSize = 11.sp,
+                                            fontSize = 10.sp,
+                                            fontFamily = FontFamily.Monospace,
                                             color = if (repository.isOllamaConnected) colors.successAccent else colors.errorAccent
                                         )
                                     }
 
-                                    // Selector de modelo Ollama
                                     if (repository.ollamaAvailableModels.isNotEmpty()) {
                                         Text(
-                                            text = "Modelo en Ollama:",
-                                            fontSize = 12.sp,
-                                            fontWeight = FontWeight.Medium,
+                                            text = "MODELO ACTIVO",
+                                            fontSize = 10.sp,
+                                            fontWeight = FontWeight.Bold,
+                                            fontFamily = FontFamily.Monospace,
                                             color = colors.onSurfaceSecondary
                                         )
 
-                                        Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                                        Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
                                             repository.ollamaAvailableModels.forEach { modelName ->
                                                 val isPicked = repository.ollamaModel == modelName
                                                 Surface(
@@ -347,25 +326,26 @@ fun SettingsDialog(
                                                         .clip(KofuDesignSystem.ButtonShape)
                                                         .border(
                                                             1.dp,
-                                                            if (isPicked) colors.accent else colors.divider,
+                                                            if (isPicked) colors.onSurfaceSecondary else colors.divider,
                                                             KofuDesignSystem.ButtonShape
                                                         )
                                                         .clickable {
                                                             repository.ollamaModel = modelName
-                                                            repository.currentModelName = "$modelName (Ollama)"
+                                                            repository.currentModelName = modelName
                                                             repository.savePreferences(context)
                                                         }
                                                 ) {
                                                     Row(
                                                         modifier = Modifier
                                                             .fillMaxWidth()
-                                                            .padding(horizontal = 10.dp, vertical = 7.dp),
+                                                            .padding(horizontal = 9.dp, vertical = 6.dp),
                                                         horizontalArrangement = Arrangement.SpaceBetween,
                                                         verticalAlignment = Alignment.CenterVertically
                                                     ) {
                                                         Text(
                                                             text = modelName,
-                                                            fontSize = 12.sp,
+                                                            fontSize = 11.sp,
+                                                            fontFamily = FontFamily.Monospace,
                                                             fontWeight = if (isPicked) FontWeight.Bold else FontWeight.Normal,
                                                             color = colors.onSurface
                                                         )
@@ -373,8 +353,8 @@ fun SettingsDialog(
                                                             Icon(
                                                                 imageVector = Icons.Default.Check,
                                                                 contentDescription = null,
-                                                                tint = colors.accent,
-                                                                modifier = Modifier.size(16.dp)
+                                                                tint = colors.onSurface,
+                                                                modifier = Modifier.size(14.dp)
                                                             )
                                                         }
                                                     }
@@ -387,8 +367,8 @@ fun SettingsDialog(
                         }
                     }
 
-                    // SECCIÓN 2: PARÁMETROS DE GENERACIÓN IA
-                    SettingsSectionHeader(title = "🎛️ PARÁMETROS DE GENERACIÓN")
+                    // SECCIÓN 2: PARÁMETROS IA
+                    FormalSectionTitle(title = "PARÁMETROS DE GENERACIÓN")
 
                     Surface(
                         color = colors.surfaceVariant,
@@ -399,8 +379,8 @@ fun SettingsDialog(
                             .border(1.dp, colors.divider, KofuDesignSystem.CardShape)
                     ) {
                         Column(
-                            modifier = Modifier.padding(12.dp),
-                            verticalArrangement = Arrangement.spacedBy(12.dp)
+                            modifier = Modifier.padding(10.dp),
+                            verticalArrangement = Arrangement.spacedBy(10.dp)
                         ) {
                             // Temperatura
                             Column {
@@ -409,16 +389,16 @@ fun SettingsDialog(
                                     horizontalArrangement = Arrangement.SpaceBetween
                                 ) {
                                     Text(
-                                        text = "Temperatura (Creatividad)",
-                                        fontSize = 12.sp,
-                                        fontWeight = FontWeight.Medium,
+                                        text = "Temperatura",
+                                        fontSize = 11.5.sp,
                                         color = colors.onSurface
                                     )
                                     Text(
                                         text = "%.2f".format(repository.temperature),
-                                        fontSize = 12.sp,
+                                        fontSize = 11.sp,
+                                        fontFamily = FontFamily.Monospace,
                                         fontWeight = FontWeight.Bold,
-                                        color = colors.accent
+                                        color = colors.onSurface
                                     )
                                 }
                                 Slider(
@@ -430,8 +410,8 @@ fun SettingsDialog(
                                     valueRange = 0.0f..1.5f,
                                     steps = 14,
                                     colors = SliderDefaults.colors(
-                                        thumbColor = colors.accent,
-                                        activeTrackColor = colors.accent,
+                                        thumbColor = colors.onSurface,
+                                        activeTrackColor = colors.onSurfaceSecondary,
                                         inactiveTrackColor = colors.divider
                                     )
                                 )
@@ -444,16 +424,16 @@ fun SettingsDialog(
                                     horizontalArrangement = Arrangement.SpaceBetween
                                 ) {
                                     Text(
-                                        text = "Top-P (Nucleus Sampling)",
-                                        fontSize = 12.sp,
-                                        fontWeight = FontWeight.Medium,
+                                        text = "Top-P Sampling",
+                                        fontSize = 11.5.sp,
                                         color = colors.onSurface
                                     )
                                     Text(
                                         text = "%.2f".format(repository.topP),
-                                        fontSize = 12.sp,
+                                        fontSize = 11.sp,
+                                        fontFamily = FontFamily.Monospace,
                                         fontWeight = FontWeight.Bold,
-                                        color = colors.accent
+                                        color = colors.onSurface
                                     )
                                 }
                                 Slider(
@@ -465,71 +445,37 @@ fun SettingsDialog(
                                     valueRange = 0.1f..1.0f,
                                     steps = 8,
                                     colors = SliderDefaults.colors(
-                                        thumbColor = colors.accent,
-                                        activeTrackColor = colors.accent,
-                                        inactiveTrackColor = colors.divider
-                                    )
-                                )
-                            }
-
-                            // Penalización por repetición
-                            Column {
-                                Row(
-                                    modifier = Modifier.fillMaxWidth(),
-                                    horizontalArrangement = Arrangement.SpaceBetween
-                                ) {
-                                    Text(
-                                        text = "Penalización de Repetición",
-                                        fontSize = 12.sp,
-                                        fontWeight = FontWeight.Medium,
-                                        color = colors.onSurface
-                                    )
-                                    Text(
-                                        text = "%.2f".format(repository.repeatPenalty),
-                                        fontSize = 12.sp,
-                                        fontWeight = FontWeight.Bold,
-                                        color = colors.accent
-                                    )
-                                }
-                                Slider(
-                                    value = repository.repeatPenalty,
-                                    onValueChange = {
-                                        repository.repeatPenalty = it
-                                        repository.savePreferences(context)
-                                    },
-                                    valueRange = 1.0f..1.5f,
-                                    steps = 9,
-                                    colors = SliderDefaults.colors(
-                                        thumbColor = colors.accent,
-                                        activeTrackColor = colors.accent,
+                                        thumbColor = colors.onSurface,
+                                        activeTrackColor = colors.onSurfaceSecondary,
                                         inactiveTrackColor = colors.divider
                                     )
                                 )
                             }
 
                             // Tokens Máximos
-                            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                                 Text(
-                                    text = "Límite de Tokens de Salida:",
-                                    fontSize = 12.sp,
-                                    fontWeight = FontWeight.Medium,
-                                    color = colors.onSurface
+                                    text = "LÍMITE DE TOKENS",
+                                    fontSize = 10.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    fontFamily = FontFamily.Monospace,
+                                    color = colors.onSurfaceSecondary
                                 )
                                 Row(
                                     modifier = Modifier.fillMaxWidth(),
-                                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                    horizontalArrangement = Arrangement.spacedBy(5.dp)
                                 ) {
                                     listOf(512, 1024, 2048, 4096).forEach { tokLimit ->
                                         val isSelected = repository.maxTokens == tokLimit
                                         Surface(
-                                            color = if (isSelected) colors.accent else colors.surface,
+                                            color = if (isSelected) colors.accentSoft else colors.surface,
                                             shape = KofuDesignSystem.ButtonShape,
                                             modifier = Modifier
                                                 .weight(1f)
                                                 .clip(KofuDesignSystem.ButtonShape)
                                                 .border(
                                                     1.dp,
-                                                    if (isSelected) colors.accent else colors.divider,
+                                                    if (isSelected) colors.onSurfaceSecondary else colors.divider,
                                                     KofuDesignSystem.ButtonShape
                                                 )
                                                 .clickable {
@@ -539,13 +485,14 @@ fun SettingsDialog(
                                         ) {
                                             Box(
                                                 contentAlignment = Alignment.Center,
-                                                modifier = Modifier.padding(vertical = 6.dp)
+                                                modifier = Modifier.padding(vertical = 5.dp)
                                             ) {
                                                 Text(
                                                     text = "$tokLimit",
-                                                    fontSize = 11.sp,
+                                                    fontSize = 10.5.sp,
+                                                    fontFamily = FontFamily.Monospace,
                                                     fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
-                                                    color = if (isSelected) colors.sendButtonText else colors.onSurface
+                                                    color = colors.onSurface
                                                 )
                                             }
                                         }
@@ -553,13 +500,14 @@ fun SettingsDialog(
                                 }
                             }
 
-                            // Prompt del Sistema
-                            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                            // System Prompt
+                            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                                 Text(
-                                    text = "Instrucción de Personalidad (System Prompt):",
-                                    fontSize = 12.sp,
-                                    fontWeight = FontWeight.Medium,
-                                    color = colors.onSurface
+                                    text = "SYSTEM PROMPT",
+                                    fontSize = 10.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    fontFamily = FontFamily.Monospace,
+                                    color = colors.onSurfaceSecondary
                                 )
 
                                 OutlinedTextField(
@@ -568,8 +516,8 @@ fun SettingsDialog(
                                         repository.systemPrompt = it
                                         repository.savePreferences(context)
                                     },
-                                    maxLines = 4,
-                                    textStyle = TextStyle(fontSize = 12.sp, color = colors.onSurface),
+                                    maxLines = 3,
+                                    textStyle = TextStyle(fontSize = 11.5.sp, color = colors.onSurface),
                                     shape = KofuDesignSystem.InputShape,
                                     modifier = Modifier.fillMaxWidth(),
                                     colors = OutlinedTextFieldDefaults.colors(
@@ -580,15 +528,14 @@ fun SettingsDialog(
                                     )
                                 )
 
-                                // Presets rápidos
                                 Row(
                                     modifier = Modifier.fillMaxWidth(),
                                     horizontalArrangement = Arrangement.spacedBy(4.dp)
                                 ) {
                                     listOf(
-                                        "Asistente" to "Eres Kofu, un asistente de IA local útil, atento, privado y respetuoso. Responde de forma clara, precisa y concisa en español.",
-                                        "Programador" to "Eres Kofu, un arquitecto de software senior experto en Kotlin, Python y C++. Explica con código limpio, bien tipado y estructurado.",
-                                        "Ultra Conciso" to "Eres Kofu. Responde de manera extremadamente directa y sintética, sin introducciones innecesarias."
+                                        "General" to "Eres Kofu, un asistente de IA formal, preciso y directo. Responde de forma técnica y concisa en español.",
+                                        "Programador" to "Eres Kofu, un ingeniero de software senior. Responde exclusivamente con soluciones óptimas y código limpio.",
+                                        "Conciso" to "Eres Kofu. Responde de manera concisa y directa, sin introducciones innecesarias."
                                     ).forEach { (label, promptText) ->
                                         Surface(
                                             color = colors.surface,
@@ -604,9 +551,9 @@ fun SettingsDialog(
                                             Text(
                                                 text = label,
                                                 fontSize = 10.sp,
-                                                color = colors.accent,
+                                                color = colors.onSurfaceSecondary,
                                                 fontWeight = FontWeight.Medium,
-                                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 4.dp)
+                                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 3.dp)
                                             )
                                         }
                                     }
@@ -615,8 +562,8 @@ fun SettingsDialog(
                         }
                     }
 
-                    // SECCIÓN 3: MODO DE DEPURACIÓN (TELEMETRÍA EN VIVO)
-                    SettingsSectionHeader(title = "🐞 MODO DE DEPURACIÓN")
+                    // SECCIÓN 3: TELEMETRÍA & DEBUG
+                    FormalSectionTitle(title = "TELEMETRÍA")
 
                     Surface(
                         color = colors.surfaceVariant,
@@ -629,20 +576,20 @@ fun SettingsDialog(
                         Row(
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .padding(12.dp),
+                                .padding(10.dp),
                             verticalAlignment = Alignment.CenterVertically,
                             horizontalArrangement = Arrangement.SpaceBetween
                         ) {
                             Column(modifier = Modifier.weight(1f)) {
                                 Text(
-                                    text = "Activar HUD de Telemetría",
-                                    fontSize = 13.sp,
+                                    text = "HUD de Telemetría",
+                                    fontSize = 12.sp,
                                     fontWeight = FontWeight.Bold,
                                     color = colors.onSurface
                                 )
                                 Text(
-                                    text = "Muestra t/s en vivo, TTFT de latencia, tokens y monitor de prompts.",
-                                    fontSize = 11.sp,
+                                    text = "Muestra velocidad (t/s), latencia TTFT y recuento de tokens.",
+                                    fontSize = 10.5.sp,
                                     color = colors.onSurfaceSecondary
                                 )
                             }
@@ -654,17 +601,17 @@ fun SettingsDialog(
                                     repository.savePreferences(context)
                                 },
                                 colors = SwitchDefaults.colors(
-                                    checkedThumbColor = colors.accent,
+                                    checkedThumbColor = colors.onSurface,
                                     checkedTrackColor = colors.accentSoft,
-                                    uncheckedThumbColor = colors.onSurfaceSecondary,
+                                    uncheckedThumbColor = colors.onSurfaceMuted,
                                     uncheckedTrackColor = colors.surface
                                 )
                             )
                         }
                     }
 
-                    // SECCIÓN 4: APARIENCIA Y TIPOGRAFÍA
-                    SettingsSectionHeader(title = "🎨 APARIENCIA & TEMA")
+                    // SECCIÓN 4: APARIENCIA
+                    FormalSectionTitle(title = "APARIENCIA")
 
                     Surface(
                         color = colors.surfaceVariant,
@@ -675,19 +622,20 @@ fun SettingsDialog(
                             .border(1.dp, colors.divider, KofuDesignSystem.CardShape)
                     ) {
                         Column(
-                            modifier = Modifier.padding(12.dp),
-                            verticalArrangement = Arrangement.spacedBy(10.dp)
+                            modifier = Modifier.padding(10.dp),
+                            verticalArrangement = Arrangement.spacedBy(8.dp)
                         ) {
                             Text(
-                                text = "Tema de la Interfaz",
-                                fontSize = 12.sp,
-                                fontWeight = FontWeight.Medium,
-                                color = colors.onSurface
+                                text = "TEMA",
+                                fontSize = 10.sp,
+                                fontWeight = FontWeight.Bold,
+                                fontFamily = FontFamily.Monospace,
+                                color = colors.onSurfaceSecondary
                             )
 
                             Row(
                                 modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                horizontalArrangement = Arrangement.spacedBy(5.dp)
                             ) {
                                 KofuThemeMode.entries.forEach { mode ->
                                     val isSelected = mode == themeMode
@@ -698,18 +646,16 @@ fun SettingsDialog(
                                             .weight(1f)
                                             .clip(KofuDesignSystem.ButtonShape)
                                             .border(
-                                                width = if (isSelected) 1.5.dp else 1.dp,
-                                                color = if (isSelected) colors.accent else colors.divider,
+                                                width = 1.dp,
+                                                color = if (isSelected) colors.onSurfaceSecondary else colors.divider,
                                                 shape = KofuDesignSystem.ButtonShape
                                             )
                                             .clickable { onChangeThemeMode(mode) }
                                     ) {
-                                        Column(
-                                            horizontalAlignment = Alignment.CenterHorizontally,
-                                            modifier = Modifier.padding(vertical = 8.dp)
+                                        Box(
+                                            contentAlignment = Alignment.Center,
+                                            modifier = Modifier.padding(vertical = 7.dp)
                                         ) {
-                                            Text(text = mode.icon, fontSize = 14.sp)
-                                            Spacer(modifier = Modifier.height(2.dp))
                                             Text(
                                                 text = mode.label,
                                                 fontSize = 10.sp,
@@ -722,40 +668,41 @@ fun SettingsDialog(
                             }
 
                             Text(
-                                text = "Tamaño de Fuente",
-                                fontSize = 12.sp,
-                                fontWeight = FontWeight.Medium,
-                                color = colors.onSurface
+                                text = "ESCALA TIPOGRÁFICA",
+                                fontSize = 10.sp,
+                                fontWeight = FontWeight.Bold,
+                                fontFamily = FontFamily.Monospace,
+                                color = colors.onSurfaceSecondary
                             )
 
                             Row(
                                 modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                horizontalArrangement = Arrangement.spacedBy(5.dp)
                             ) {
                                 KofuFontScale.entries.forEach { scale ->
                                     val isSelected = scale == fontScale
                                     Surface(
-                                        color = if (isSelected) colors.accent else colors.surface,
+                                        color = if (isSelected) colors.accentSoft else colors.surface,
                                         shape = KofuDesignSystem.ButtonShape,
                                         modifier = Modifier
                                             .weight(1f)
                                             .clip(KofuDesignSystem.ButtonShape)
                                             .border(
                                                 1.dp,
-                                                if (isSelected) colors.accent else colors.divider,
+                                                if (isSelected) colors.onSurfaceSecondary else colors.divider,
                                                 KofuDesignSystem.ButtonShape
                                             )
                                             .clickable { onChangeFontScale(scale) }
                                     ) {
                                         Box(
                                             contentAlignment = Alignment.Center,
-                                            modifier = Modifier.padding(vertical = 8.dp)
+                                            modifier = Modifier.padding(vertical = 7.dp)
                                         ) {
                                             Text(
                                                 text = scale.label,
-                                                fontSize = 11.sp,
+                                                fontSize = 10.sp,
                                                 fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
-                                                color = if (isSelected) colors.sendButtonText else colors.onSurface
+                                                color = colors.onSurface
                                             )
                                         }
                                     }
@@ -764,8 +711,8 @@ fun SettingsDialog(
                         }
                     }
 
-                    // SECCIÓN 5: PRIVACIDAD, LEGAL Y ACCIONES
-                    SettingsSectionHeader(title = "📜 PRIVACIDAD & ACCIONES")
+                    // SECCIÓN 5: ACCIONES
+                    FormalSectionTitle(title = "ACCIONES")
 
                     Surface(
                         color = colors.surfaceVariant,
@@ -776,8 +723,8 @@ fun SettingsDialog(
                             .border(1.dp, colors.divider, KofuDesignSystem.CardShape)
                     ) {
                         Column(
-                            modifier = Modifier.padding(12.dp),
-                            verticalArrangement = Arrangement.spacedBy(8.dp)
+                            modifier = Modifier.padding(10.dp),
+                            verticalArrangement = Arrangement.spacedBy(6.dp)
                         ) {
                             OutlinedButton(
                                 onClick = {
@@ -790,13 +737,13 @@ fun SettingsDialog(
                                 Icon(
                                     imageVector = Icons.Default.Info,
                                     contentDescription = null,
-                                    tint = colors.accent,
-                                    modifier = Modifier.size(16.dp)
+                                    tint = colors.onSurfaceSecondary,
+                                    modifier = Modifier.size(15.dp)
                                 )
-                                Spacer(modifier = Modifier.width(8.dp))
+                                Spacer(modifier = Modifier.width(6.dp))
                                 Text(
-                                    text = "Ver Términos y Condiciones / Licencia Gemma",
-                                    fontSize = 12.sp,
+                                    text = "Términos de Uso y Licencia Gemma",
+                                    fontSize = 11.5.sp,
                                     color = colors.onSurface
                                 )
                             }
@@ -813,12 +760,12 @@ fun SettingsDialog(
                                     imageVector = Icons.Default.Delete,
                                     contentDescription = null,
                                     tint = colors.errorAccent,
-                                    modifier = Modifier.size(16.dp)
+                                    modifier = Modifier.size(15.dp)
                                 )
-                                Spacer(modifier = Modifier.width(8.dp))
+                                Spacer(modifier = Modifier.width(6.dp))
                                 Text(
-                                    text = "Limpiar Historial de Conversación",
-                                    fontSize = 12.sp,
+                                    text = "Limpiar Historial de Chat",
+                                    fontSize = 11.5.sp,
                                     color = colors.errorAccent
                                 )
                             }
@@ -826,10 +773,10 @@ fun SettingsDialog(
                     }
                 }
 
-                // PIE FIJO CON BOTÓN DE GUARDAR Y CERRAR
-                Spacer(modifier = Modifier.height(10.dp))
+                // PIE FIJO CON BOTÓN
+                Spacer(modifier = Modifier.height(8.dp))
                 HorizontalDivider(color = colors.divider, thickness = 1.dp)
-                Spacer(modifier = Modifier.height(10.dp))
+                Spacer(modifier = Modifier.height(8.dp))
 
                 Button(
                     onClick = onDismiss,
@@ -841,8 +788,8 @@ fun SettingsDialog(
                     modifier = Modifier.fillMaxWidth()
                 ) {
                     Text(
-                        text = "Guardar y Cerrar",
-                        fontSize = 14.sp,
+                        text = "Guardar",
+                        fontSize = 13.sp,
                         fontWeight = FontWeight.Bold
                     )
                 }
@@ -852,13 +799,14 @@ fun SettingsDialog(
 }
 
 @Composable
-private fun SettingsSectionHeader(title: String) {
+private fun FormalSectionTitle(title: String) {
     val colors = LocalKofuColors.current
     Text(
         text = title,
-        fontSize = 11.sp,
-        fontWeight = FontWeight.ExtraBold,
+        fontSize = 10.sp,
+        fontWeight = FontWeight.Bold,
+        fontFamily = FontFamily.Monospace,
         letterSpacing = 0.8.sp,
-        color = colors.accent
+        color = colors.onSurfaceSecondary
     )
 }
