@@ -1,0 +1,39 @@
+Kofu 2B Edge
+Copyright (c) 2026 alex minerva (shebxyd)
+
+This model derivative is based on Gemma 2B ("google/gemma-2b-it"),
+developed and released by Google LLC.
+
+Gemma is a trademark of Google LLC.
+
+================================================================================
+NOTICE OF MODIFICATIONS
+================================================================================
+In accordance with Section 3 of the Gemma Terms of Use, notice is hereby given
+that this model has been modified from the original Gemma base model:
+
+1. Parameter-Efficient Fine-Tuning (PEFT) using LoRA (Low-Rank Adaptation):
+   - Base Model: google/gemma-2b-it
+   - Target Modules: q_proj, k_proj, v_proj, o_proj
+   - Training Datasets: Multilingual instructional, programming logic (C++, Java, Web),
+     ethical cybersecurity concepts, and Spanish conversational data.
+2. Weight merging into full-precision BF16 SafeTensors format.
+3. Quantization to GGUF format (Q4_K_M) optimized for zero-copy mmap execution
+   on edge and mobile ARM64 hardware (Kofu Mobile Android runtime).
+
+================================================================================
+TERMS AND CONDITIONS
+================================================================================
+Use, reproduction, and distribution of this model and its derivatives are
+subject to:
+
+1. Gemma Terms of Use:
+   https://ai.google.dev/gemma/terms
+
+2. Google Generative AI Prohibited Use Policy:
+   https://policies.google.com/terms/generative-ai/use-policy
+
+DISCLAIMER:
+This model derivative is distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR
+CONDITIONS OF ANY KIND. It is an independent project and is not affiliated with,
+sponsored by, or endorsed by Google LLC.

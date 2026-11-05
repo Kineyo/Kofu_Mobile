@@ -20,13 +20,16 @@ pipeline_tag: text-generation
 inference: false
 model_creator: shebxyd
 model_type: gemma
-model_name: Kofu Gemma 2B Edge
+model_name: Kofu 2B Edge
+extra_gated_heading: Gemma Terms of Use Compliance
+extra_gated_prompt: By using this model, you agree to the Gemma Terms of Use and the Google Generative AI Prohibited Use Policy.
 ---
 
 <div align="center">
-  <img src="banner.jpg" alt="Kofu Gemma 2B Edge Banner" width="100%" style="border-radius: 12px; margin-bottom: 20px;">
+  <img src="banner.jpeg" alt="Kofu 2B Edge Banner" width="100%" style="border-radius: 12px; margin-bottom: 20px;">
 
-  # Kofu Gemma 2B Edge (IA Local • Sin Internet)
+  # Kofu 2B Edge (IA Local • On-Device)
+  ### *Modelo derivado basado en Google Gemma 2B Instruct*
 
   [![License: Gemma](https://img.shields.io/badge/License-Gemma_Terms-blue.svg)](https://ai.google.dev/gemma/terms)
   [![Base Model: Gemma 2B](https://img.shields.io/badge/Base_Model-google%2Fgemma--2b--it-purple.svg)](https://huggingface.co/google/gemma-2b-it)
@@ -36,18 +39,46 @@ model_name: Kofu Gemma 2B Edge
 
 ---
 
-## 📌 Descripción del Modelo
+## 📌 Resumen del Modelo
 
-**`kofu-gemma-2b-edge`** es un modelo conversacional e instruccional ligero diseñado y optimizado específicamente para su ejecución local **100% on-device** (sin conexión a Internet) en teléfonos móviles y dispositivos embebidos con arquitectura **ARM64**.
+**`kofu-2b-edge`** es un modelo de lenguaje ligero conversacional e instruccional diseñado y optimizado específicamente para ejecución **100% on-device** (sin conexión a Internet) en teléfonos móviles y dispositivos embebidos con arquitectura **ARM64**.
 
 Forma parte del ecosistema oficial de [**Kofu Mobile Assistant**](https://github.com/Kineyo/Kofu_Mobile), donde interactúa directamente con un backend nativo en **C++20** con mapeo de memoria zero-copy (`mmap`).
 
-### 🎯 Especialización y Capacidades
-El modelo fue entrenado a partir de `google/gemma-2b-it` integrando más de **5,000 ejemplos de alta calidad** enfocados en:
-1. **Lógica de Programación y Algoritmos:** C++, Java, Python, Web y resolución paso a paso.
-2. **Ciberseguridad & Redes:** Análisis de vulnerabilidades, buenas prácticas defensivas y principios éticos.
-3. **Razonamiento Multidisciplinario en Español:** Matemáticas, ciencias, historia universal y ética.
-4. **Respuestas Concisas y Amables:** Ideal para interfaces móviles con baja latencia y consumo ultra-reducido de batería.
+- **Desarrollador / Creador:** alex minerva ([@shebxyd](https://huggingface.co/shebxyd))
+- **Modelo Base:** [google/gemma-2b-it](https://huggingface.co/google/gemma-2b-it) (Google LLC)
+- **Tipo de Modelo:** Causal LM decoder-only basado en arquitectura Gemma
+- **Licencia:** [Gemma Terms of Use](https://ai.google.dev/gemma/terms)
+- **Idiomas:** Español (`es`), Inglés (`en`)
+
+---
+
+## ⚖️ Declaración de Cumplimiento de Normas Gemma (Gemma Terms of Use)
+
+De acuerdo con la sección 3 de los **Términos de Uso de Gemma**:
+
+1. **Aviso de Modificación (Notice of Modifications):**
+   Este modelo es un **trabajo derivado (Model Derivative)** que modifica el modelo base oficial `google/gemma-2b-it` de Google LLC mediante:
+   - Adaptación de bajo rango (**LoRA** - Low-Rank Adaptation) con $r=16, \alpha=32$ sobre los módulos de atención (`q_proj`, `k_proj`, `v_proj`, `o_proj`).
+   - Fusión completa de pesos en precisión `bfloat16` (`model.safetensors`).
+   - Cuantización a formato GGUF de 4 bits (`Q4_K_M`) para inferencia eficiente y de bajo consumo en dispositivos móviles con memoria limitada (< 2.5 GB RAM).
+
+2. **Atribución de Marcas:**
+   *Gemma is a trademark of Google LLC.*  
+   Este proyecto es un desarrollo independiente de alex minerva (`shebxyd`) y **no está afiliado, patrocinado ni respaldado por Google LLC**.
+
+3. **Política de Uso Prohibido:**
+   El uso, distribución y derivación de este modelo está estrictamente condicionado al cumplimiento de la **[Política de Uso Prohibido de IA Generativa de Google](https://policies.google.com/terms/generative-ai/use-policy)**.
+
+---
+
+## 🎯 Especialización y Capacidades
+
+El ajuste fino instruccional integró más de **5,000 ejemplos de alta calidad** enfocados en:
+1. **Lógica de Programación y Algoritmos:** C++, Java, Python, Web y resolución algorítmica paso a paso.
+2. **Ciberseguridad Defensiva y Principios Éticos:** Explicación conceptual de vulnerabilidades y buenas prácticas de mitigación y seguridad en redes.
+3. **Razonamiento Multidisciplinario en Español:** Matemáticas, ciencias, historia y ética formativa.
+4. **Respuestas Concisas y Amables:** Optimizado para interfaces móviles conversacionales con baja latencia y consumo reducido de batería.
 
 ---
 
@@ -57,6 +88,8 @@ El modelo fue entrenado a partir de `google/gemma-2b-it` integrando más de **5,
 | :--- | :---: | :---: | :--- |
 | `kofu-gemma-2b-edge-q4_k_m.gguf` | **GGUF** (Q4_K_M) | **~1.4 GB** | **(Recomendado para Móvil)** Ejecución directa en teléfonos (RAM < 2.5 GB). Formato predeterminado de Kofu Mobile. |
 | `model.safetensors` | **Safetensors** (BF16) | **~5.0 GB** | Pesos completos fusionados (Merged Base + LoRA) para servidores, fine-tuning adicional o conversión. |
+| `NOTICE` | Texto | < 1 KB | Archivo de aviso formal requerido por los Términos de Uso de Gemma. |
+| `LICENSE` | Texto | < 2 KB | Términos de uso y condiciones de licencia Gemma de Google. |
 | `tokenizer.json` / `tokenizer_config.json` | Tokenizer | ~17 MB | Tokenizer nativo de Gemma con vocabulario completo de 256k tokens. |
 | `config.json` | Config | < 1 KB | Configuración de arquitectura Gemma CausalLM. |
 
@@ -64,7 +97,7 @@ El modelo fue entrenado a partir de `google/gemma-2b-it` integrando más de **5,
 
 ## ⚡ Formato del Prompt (Gemma Chat Format)
 
-El modelo utiliza el formato oficial de turnos de Gemma:
+El modelo preserva el formato oficial de turnos de diálogo de Gemma:
 
 ```text
 <start_of_turn>user
@@ -78,14 +111,13 @@ Hola Kofu, ¿puedes explicarme cómo funciona un apuntador en C++?<end_of_turn>
 ## 🚀 Cómo Usar este Modelo
 
 ### 1. En la Aplicación Kofu Mobile (Android)
-El modelo está preconfigurado en la aplicación oficial [Kofu Mobile](https://github.com/Kineyo/Kofu_Mobile).
+El modelo está integrado en la aplicación móvil [Kofu Mobile](https://github.com/Kineyo/Kofu_Mobile).
 1. Abre la app en tu teléfono Android.
-2. Al iniciar o tocar el botón **"+"**, el motor nativo en C++ descargará e instalará automáticamente `kofu-gemma-2b-edge-q4_k_m.gguf` directamente desde este repositorio.
-3. ¡Listo! Puedes conversar con Kofu de forma 100% privada y offline.
+2. Al iniciar, el motor nativo en C++ descargará e instalará automáticamente el archivo `.gguf` directamente desde este repositorio.
+3. Puedes conversar de forma privada, segura y offline.
 
 ### 2. Con `llama.cpp` (Terminal / Local)
 ```bash
-# Ejecutar inferencia interactiva en CPU o GPU:
 ./llama-cli -m kofu-gemma-2b-edge-q4_k_m.gguf \
     -p "<start_of_turn>user\nExplica qué es un puntero en C++<end_of_turn>\n<start_of_turn>model\n" \
     -n 256 --color -c 2048
@@ -96,7 +128,7 @@ El modelo está preconfigurado en la aplicación oficial [Kofu Mobile](https://g
 import torch
 from transformers import AutoTokenizer, AutoModelForCausalLM
 
-model_id = "shebxyd/kofu-gemma-2b-edge"
+model_id = "shebxyd/kofu-2b-edge"
 
 tokenizer = AutoTokenizer.from_pretrained(model_id)
 model = AutoModelForCausalLM.from_pretrained(
@@ -126,14 +158,23 @@ print(tokenizer.decode(outputs[0], skip_special_tokens=False))
 - **Batch Size Efectivo:** `16` (batch per device: 1, gradient accumulation: 16)
 - **Optimizador:** `AdamW` (learning rate: `2e-4`, linear schedule)
 - **Evolución del Entrenamiento:** Loss inicial `3.11` $\rightarrow$ Loss final `1.40`
-- **Datasets:**
-  - `plncmm/spanish-alpaca` (Conocimiento general, matemáticas, historia, valores)
-  - `Yahir/alpaca-logica-programacion` (Lógica y programación)
-  - `sahil2801/CodeAlpaca-20k` (Desarrollo C++, Java, HTML, Web)
-  - `murdok1982/gemma4-programacion-seguridad` (Ciberseguridad y análisis de código)
+- **Datasets Utilizados:**
+  - `plncmm/spanish-alpaca`
+  - `Yahir/alpaca-logica-programacion`
+  - `sahil2801/CodeAlpaca-20k`
+  - `murdok1982/gemma4-programacion-seguridad`
 
 ---
 
-## 📜 Licencia
+## ⚠️ Limitaciones y Consideraciones Éticas
 
-Este modelo se distribuye bajo los términos de la **[Licencia Gemma de Google (Gemma Terms of Use)](https://ai.google.dev/gemma/terms)** de acuerdo con las condiciones de uso de los modelos base de Google DeepMind.
+- **Tamaño del Modelo (2B):** Como modelo de 2 mil millones de parámetros, puede presentar alucinaciones o imprecisiones en tareas de razonamiento extremo o conocimiento altamente especializado.
+- **Verificación de Código:** Todo código generado debe ser revisado y probado en entornos controlados antes de su despliegue en producción.
+- **Usos Prohibidos:** Está estrictamente prohibido utilizar este modelo para la generación de malware, explotación de vulnerabilidades sin autorización, vigilancia masiva, suplantación de identidad o cualquier actividad que contravenga las políticas de uso ético de Google y las leyes locales.
+
+---
+
+## 📜 Licencia y Términos
+
+Este modelo se distribuye bajo los términos de la **[Licencia Gemma de Google (Gemma Terms of Use)](https://ai.google.dev/gemma/terms)**.
+Consulte los archivos [`LICENSE`](./LICENSE) y [`NOTICE`](./NOTICE) incluidos en la raíz del repositorio.

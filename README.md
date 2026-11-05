@@ -5,7 +5,7 @@
 </p>
 
 <p align="center">
-  <a href="https://huggingface.co/shebxyd/kofu-gemma-2b-edge"><img src="https://img.shields.io/badge/🤗%20Hugging%20Face-shebxyd%2Fkofu--gemma--2b--edge-yellow?style=for-the-badge" alt="Hugging Face Model"></a>
+  <a href="https://huggingface.co/shebxyd/kofu-2b-edge"><img src="https://img.shields.io/badge/🤗%20Hugging%20Face-shebxyd%2Fkofu--2b--edge-yellow?style=for-the-badge" alt="Hugging Face Model"></a>
   <img src="https://img.shields.io/badge/Backend-C%2B%2B20%20NDK%20r26-00599C?style=for-the-badge&logo=cplusplus&logoColor=white" alt="C++20 NDK">
   <img src="https://img.shields.io/badge/UI-Jetpack%20Compose-4285F4?style=for-the-badge&logo=jetpackcompose&logoColor=white" alt="Jetpack Compose">
   <img src="https://img.shields.io/badge/Android-8.0%2B-3DDC84?style=for-the-badge&logo=android&logoColor=white" alt="Android">
@@ -22,12 +22,6 @@
 **Kofu Mobile** es un asistente de Inteligencia Artificial para Android diseñado para funcionar de manera **100% autónoma y privada dentro de tu teléfono**, sin servidores en la nube, sin cuentas ni suscripciones, y sin transferir tus datos personales ni conversaciones a internet.
 
 A diferencia de clientes de chat convencionales que se conectan a APIs externas (como ChatGPT o Claude) o soluciones que requieren instalar entornos Linux complejos (como Termux o PRoot), **Kofu Mobile ejecuta modelos de lenguaje de última generación optimizados para dispositivos móviles (Edge LLMs de 1B a 2.5B de parámetros) directamente sobre el procesador, GPU o NPU de tu teléfono**. Una vez descargado el modelo, puedes dialogar con Kofu incluso en **Modo Avión**.
-
-<p align="center">
-  <img src="assets/images/kofu_character.png" alt="Personaje Kofu" width="280px" style="border-radius: 12px; margin: 10px;">
-</p>
-
----
 
 ## 🏛️ Arquitectura Desacoplada: C++20 + Kotlin Compose
 
@@ -69,7 +63,7 @@ Para garantizar la máxima velocidad de inferencia sin comprometer la fluidez de
 ```mermaid
 flowchart TD
     A["📱 Inicio de Kofu Assistant"] --> B{"¿Existe el modelo local en el dispositivo?"}
-    B -- "No" --> C["📥 Descarga automática desde Hugging Face\n(shebxyd/kofu-gemma-2b-edge)"]
+    B -- "No" --> C["📥 Descarga automática desde Hugging Face\n(shebxyd/kofu-2b-edge)"]
     B -- "Sí (o importado con botón '+')" --> D["🛡️ Validación de Cabecera Binaria en C++"]
     C --> D
     D -- "Firma 'GGUF' (Q4_K_M)" --> E["⚡ Motor Nativo GGUF en C++\n(Inferencia acelerada en CPU ARM64)"]
@@ -84,7 +78,7 @@ flowchart TD
 Al iniciar por primera vez, [`LlamaRepository`](Kofu_Assistant/app/src/main/java/com/kofu/assistant/repository/LlamaRepository.kt) comprueba el directorio de almacenamiento privado de la app:
 * **Si el modelo ya existe:** Se inicializa de inmediato a través del motor C++ mediante `mmap` en menos de 100 milisegundos.
 * **Si no existe:** Se conecta de forma segura a Hugging Face para descargar automáticamente el modelo oficial del proyecto:
-  * **Modelo Oficial:** [`shebxyd/kofu-gemma-2b-edge`](https://huggingface.co/shebxyd/kofu-gemma-2b-edge)
+  * **Modelo Oficial:** [`shebxyd/kofu-2b-edge`](https://huggingface.co/shebxyd/kofu-2b-edge)
   * **Archivo:** `kofu-gemma-2b-edge-q4_k_m.gguf` (~1.4 GB)
   * **Fallback secundario:** Si no hubiera conexión directa al modelo GGUF, cuenta con enlace de respaldo a paquetes LiteRT.
 * **Carga manual (Botón `+`):** Si ya cuentas con un archivo `.gguf`, `.litertlm` o `.task` en la memoria de tu teléfono, puedes cargarlo directamente tocando el botón `+`.
@@ -151,14 +145,14 @@ Kofu_Mobile/
 
 ---
 
-## 🤖 Modelo Oficial: `shebxyd/kofu-gemma-2b-edge`
+## 🤖 Modelo Oficial: `shebxyd/kofu-2b-edge`
 
-El modelo predeterminado de Kofu es una versión especializada de **Gemma 2B IT** entrenada con **LoRA** (*Low-Rank Adaptation*) en Google Colab sobre tareas multidisciplinarias:
+El modelo predeterminado de Kofu es una versión especializada basada en **Google Gemma 2B IT** entrenada con **LoRA** (*Low-Rank Adaptation*) en Google Colab sobre tareas multidisciplinarias:
 * 💻 **Programación y Algoritmos:** Generación y depuración de código en Python, Kotlin, C++ y JavaScript.
 * 🧪 **Razonamiento Científico:** Resolución de problemas de química, física y matemáticas.
 * 🇪🇸 **Español Nativo Fluido:** Explicaciones claras, sintéticas y naturales en español.
 * 📦 **Cuantización Q4_K_M:** Reducción de 5.0 GB originales a solo ~1.4 GB con mínima pérdida de perplejidad, ideal para dispositivos con 6 GB a 8 GB de memoria RAM.
-* 🔗 **Repositorio en Hugging Face:** [shebxyd/kofu-gemma-2b-edge](https://huggingface.co/shebxyd/kofu-gemma-2b-edge)
+* 🔗 **Repositorio en Hugging Face:** [shebxyd/kofu-2b-edge](https://huggingface.co/shebxyd/kofu-2b-edge)
 
 ---
 

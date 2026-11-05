@@ -48,7 +48,7 @@ object LlamaRepository {
     // Modelo Oficial del Proyecto Kofu Mobile entrenado y optimizado para edge (ARM64)
     private const val DEFAULT_KOFU_GGUF_FILENAME = "kofu-gemma-2b-edge-q4_k_m.gguf"
     private const val DEFAULT_KOFU_GGUF_URL =
-        "https://huggingface.co/shebxyd/kofu-gemma-2b-edge/resolve/main/kofu-gemma-2b-edge-q4_k_m.gguf"
+        "https://huggingface.co/shebxyd/kofu-2b-edge/resolve/main/kofu-gemma-2b-edge-q4_k_m.gguf"
 
     // Fallback de respaldo LiteRT
     private const val FALLBACK_LITERT_FILENAME = "Gemma-2B-It-GPU-Int4.litertlm"
