@@ -32,6 +32,18 @@ data class TurnMessage(
     val content: String
 )
 
+data class ModelOption(
+    val id: String,
+    val name: String,
+    val shortName: String,
+    val description: String,
+    val fileName: String,
+    val downloadUrl: String,
+    val sizeLabel: String,
+    val isGemma4: Boolean = false,
+    val isRecommended: Boolean = false
+)
+
 /**
  * Repositorio de alto nivel v2.0 que conecta el motor nativo en C++ (libkofu_engine.so)
  * con la interfaz Jetpack Compose.
@@ -52,12 +64,38 @@ object LlamaRepository {
 
     private val supportedExtensions = listOf(".litertlm", ".task", ".tflite", ".bin", ".gguf")
 
-    // Modelo Oficial Kofu v2.0
+    // Modelos Oficiales Kofu Edge
+    val AVAILABLE_MODELS = listOf(
+        ModelOption(
+            id = "kofu-gemma4",
+            name = "Kofu 4.0 Edge (Gemma 4 E4B)",
+            shortName = "Gemma 4",
+            description = "Última arquitectura Gemma 4 con 42 capas, alta capacidad de razonamiento lógico, código y ciberseguridad.",
+            fileName = "kofu-gemma4-edge-q4_k_m.gguf",
+            downloadUrl = "https://huggingface.co/shebxyd/kofu-gemma4-edge/resolve/main/kofu-gemma4-edge-q4_k_m.gguf",
+            sizeLabel = "~3.2 GB",
+            isGemma4 = true,
+            isRecommended = true
+        ),
+        ModelOption(
+            id = "kofu-v2",
+            name = "Kofu 2.0 Edge (Gemma 2 2B)",
+            shortName = "Gemma 2",
+            description = "Modelo ultraligero y de respuesta inmediata basado en Gemma 2 2B.",
+            fileName = "kofu-v2-edge-q4_k_m.gguf",
+            downloadUrl = "https://huggingface.co/shebxyd/kofu-v2-edge/resolve/main/kofu-v2-edge-q4_k_m.gguf",
+            sizeLabel = "~1.6 GB",
+            isGemma4 = false,
+            isRecommended = false
+        )
+    )
+
+    var selectedModel: ModelOption by mutableStateOf(AVAILABLE_MODELS.first())
+
+    // Constantes de compatibilidad
     const val DEFAULT_KOFU_V2_GGUF_FILENAME = "kofu-v2-edge-q4_k_m.gguf"
     const val DEFAULT_KOFU_V2_GGUF_URL =
         "https://huggingface.co/shebxyd/kofu-v2-edge/resolve/main/kofu-v2-edge-q4_k_m.gguf"
-
-    // Modelo Kofu v1.0 (Fallback)
     const val FALLBACK_KOFU_V1_FILENAME = "kofu-gemma-2b-edge-q4_k_m.gguf"
     const val FALLBACK_KOFU_V1_URL =
         "https://huggingface.co/shebxyd/kofu-2b-edge/resolve/main/kofu-gemma-2b-edge-q4_k_m.gguf"
@@ -210,8 +248,74 @@ object LlamaRepository {
         KofuNativeEngine.nativeCancelGeneration()
     }
 
+    fun isModelDownloaded(context: Context, modelOption: ModelOption): Boolean {
+        val externalDir = context.getExternalFilesDir(null) ?: return false
+        val file = File(externalDir, modelOption.fileName)
+        return file.exists() && file.length() > 50L * 1024L * 1024L
+    }
+
+    fun getLocalModelFile(context: Context, modelOption: ModelOption): File? {
+        val externalDir = context.getExternalFilesDir(null) ?: return null
+        val file = File(externalDir, modelOption.fileName)
+        return if (file.exists() && file.length() > 50L * 1024L * 1024L) file else null
+    }
+
+    fun switchModel(
+        context: Context,
+        modelOption: ModelOption,
+        scope: CoroutineScope,
+        onNeedsDownload: () -> Unit
+    ) {
+        selectedModel = modelOption
+        val file = getLocalModelFile(context, modelOption)
+        if (file != null) {
+            loadModel(context, Uri.fromFile(file), scope)
+        } else {
+            onNeedsDownload()
+        }
+    }
+
+    fun downloadModel(
+        context: Context,
+        modelOption: ModelOption,
+        onProgress: (Float) -> Unit,
+        onComplete: (Uri) -> Unit,
+        onError: (String) -> Unit
+    ) {
+        val externalDir = context.getExternalFilesDir(null)
+        if (externalDir == null) {
+            onError("Almacenamiento externo no disponible")
+            return
+        }
+
+        val localFile = File(externalDir, modelOption.fileName)
+        if (localFile.exists() && localFile.length() > 50L * 1024L * 1024L) {
+            onComplete(Uri.fromFile(localFile))
+            return
+        }
+
+        CoroutineScope(Dispatchers.IO).launch {
+            val client = OkHttpClient.Builder()
+                .connectTimeout(30, TimeUnit.SECONDS)
+                .readTimeout(180, TimeUnit.SECONDS)
+                .writeTimeout(60, TimeUnit.SECONDS)
+                .build()
+
+            val success = tryDownloadFileWithResume(client, modelOption.downloadUrl, localFile, onProgress)
+            if (success && localFile.length() > 1024L) {
+                withContext(Dispatchers.Main) {
+                    onComplete(Uri.fromFile(localFile))
+                }
+            } else {
+                withContext(Dispatchers.Main) {
+                    onError("No se pudo descargar el modelo ${modelOption.shortName}")
+                }
+            }
+        }
+    }
+
     /**
-     * Descarga de modelos con soporte para reanudar descargas incompletas.
+     * Descarga del modelo seleccionado actualmente.
      */
     fun downloadDefaultModel(
         context: Context,
@@ -225,52 +329,25 @@ object LlamaRepository {
             return
         }
 
-        // 1. Comprobar si ya existe Kofu v2.0 localmente
-        val existingV2 = File(externalDir, DEFAULT_KOFU_V2_GGUF_FILENAME)
-        if (existingV2.exists() && existingV2.length() > 100L * 1024L * 1024L) {
-            onComplete(Uri.fromFile(existingV2))
+        // 1. Comprobar si el modelo seleccionado ya existe localmente
+        val selectedFile = getLocalModelFile(context, selectedModel)
+        if (selectedFile != null) {
+            onComplete(Uri.fromFile(selectedFile))
             return
         }
 
-        // 2. Comprobar si existe Kofu v1.0
-        val existingV1 = File(externalDir, FALLBACK_KOFU_V1_FILENAME)
-        if (existingV1.exists() && existingV1.length() > 100L * 1024L * 1024L) {
-            onComplete(Uri.fromFile(existingV1))
-            return
-        }
-
-        CoroutineScope(Dispatchers.IO).launch {
-            val client = OkHttpClient.Builder()
-                .connectTimeout(30, TimeUnit.SECONDS)
-                .readTimeout(180, TimeUnit.SECONDS)
-                .writeTimeout(60, TimeUnit.SECONDS)
-                .build()
-
-            // Intentar descargar Kofu v2.0 primero
-            val v2Target = File(externalDir, DEFAULT_KOFU_V2_GGUF_FILENAME)
-            val v2Success = tryDownloadFileWithResume(client, DEFAULT_KOFU_V2_GGUF_URL, v2Target, onProgress)
-
-            if (v2Success && v2Target.length() > 1024L) {
-                withContext(Dispatchers.Main) {
-                    onComplete(Uri.fromFile(v2Target))
-                }
-                return@launch
-            }
-
-            // Fallback a Kofu v1.0
-            val v1Target = File(externalDir, FALLBACK_KOFU_V1_FILENAME)
-            val v1Success = tryDownloadFileWithResume(client, FALLBACK_KOFU_V1_URL, v1Target, onProgress)
-
-            if (v1Success && v1Target.length() > 1024L) {
-                withContext(Dispatchers.Main) {
-                    onComplete(Uri.fromFile(v1Target))
-                }
-            } else {
-                withContext(Dispatchers.Main) {
-                    onError("No se pudo descargar el modelo oficial de Kofu")
-                }
+        // 2. Comprobar si existe cualquier otro modelo oficial localmente
+        for (m in AVAILABLE_MODELS) {
+            val local = getLocalModelFile(context, m)
+            if (local != null) {
+                selectedModel = m
+                onComplete(Uri.fromFile(local))
+                return
             }
         }
+
+        // 3. Descargar el modelo seleccionado (por defecto Gemma 4)
+        downloadModel(context, selectedModel, onProgress, onComplete, onError)
     }
 
     private suspend fun tryDownloadFileWithResume(

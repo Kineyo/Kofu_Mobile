@@ -51,6 +51,7 @@ import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontFamily
 import com.kofu.assistant.repository.TurnMessage
+import com.kofu.assistant.repository.ModelOption
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
@@ -143,6 +144,7 @@ fun ChatScreen(
     var showMenu by remember { mutableStateOf(false) }
     var showThemeDialog by remember { mutableStateOf(false) }
     var showAboutDialog by remember { mutableStateOf(false) }
+    var showModelDialog by remember { mutableStateOf(false) }
 
     var downloadProgress by remember { mutableStateOf<Float?>(null) }
     var downloadError by remember { mutableStateOf<String?>(null) }
@@ -151,10 +153,33 @@ fun ChatScreen(
     val activeBackend = repository.activeBackend
     val currentModelName = repository.currentModelName
 
+    fun onSelectModel(modelOption: ModelOption) {
+        if (repository.isModelDownloaded(context, modelOption)) {
+            repository.switchModel(context, modelOption, scope) {}
+        } else {
+            downloadProgress = 0f
+            downloadError = null
+            repository.downloadModel(
+                context = context,
+                modelOption = modelOption,
+                onProgress = { downloadProgress = it },
+                onComplete = { uri ->
+                    downloadProgress = null
+                    downloadError = null
+                    repository.loadModel(context, uri, scope)
+                },
+                onError = { error ->
+                    downloadProgress = null
+                    downloadError = "Error descargando ${modelOption.shortName}: $error"
+                }
+            )
+        }
+    }
+
     val serverStatus = when {
         serverReady -> "Modelo $currentModelName listo"
         downloadError != null -> downloadError!!
-        downloadProgress != null -> "Descargando modelo inicial... ${(downloadProgress!! * 100).toInt()}%"
+        downloadProgress != null -> "Descargando ${repository.selectedModel.shortName}... ${(downloadProgress!! * 100).toInt()}%"
         else -> "Preparando motor local..."
     }
     val serverProgress: Float? = downloadProgress
@@ -566,11 +591,38 @@ fun ChatScreen(
                     }
                 }
 
-                // Right side actions: Theme Pill + Load Model (+) + Menu
+                // Right side actions: Model Pill + Theme Pill + Load Model (+) + Menu
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(4.dp)
                 ) {
+                    // Quick Model Selector Pill button
+                    Surface(
+                        color = colors.accentSoft.copy(alpha = if (colors.isDark) 0.6f else 0.4f),
+                        shape = RoundedCornerShape(50),
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(50))
+                            .border(1.dp, colors.accent.copy(alpha = 0.5f), RoundedCornerShape(50))
+                            .clickable { showModelDialog = true }
+                    ) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier.padding(horizontal = 9.dp, vertical = 6.dp)
+                        ) {
+                            Text(
+                                text = if (repository.selectedModel.isGemma4) "✨" else "⚡",
+                                fontSize = 11.sp
+                            )
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text(
+                                text = repository.selectedModel.shortName,
+                                color = colors.accent,
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
+                    }
+
                     // Quick Theme Mode Pill button
                     Surface(
                         color = colors.surfaceVariant.copy(alpha = 0.85f),
@@ -836,6 +888,153 @@ fun ChatScreen(
             confirmButton = {
                 TextButton(onClick = { showThemeDialog = false }) {
                     Text("Cerrar", color = colors.accent)
+                }
+            },
+            containerColor = surfaceColor
+        )
+    }
+
+    // Model Selector Dialog (Kofu 4.0 Gemma 4 vs Kofu 2.0 Gemma 2)
+    if (showModelDialog) {
+        AlertDialog(
+            onDismissRequest = { showModelDialog = false },
+            title = {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Text(text = "🧠", fontSize = 20.sp)
+                    Text(
+                        text = "Seleccionar Modelo Kofu",
+                        fontWeight = FontWeight.Bold,
+                        color = onSurface
+                    )
+                }
+            },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Text(
+                        text = "Elige el modelo para ejecutar en local con aceleración nativa ARM64:",
+                        color = onSurfaceSecondary,
+                        fontSize = 13.sp
+                    )
+                    Spacer(modifier = Modifier.height(2.dp))
+
+                    repository.AVAILABLE_MODELS.forEach { modelOpt ->
+                        val isSelected = modelOpt.id == repository.selectedModel.id
+                        val isDownloaded = repository.isModelDownloaded(context, modelOpt)
+                        val isLoaded = isSelected && repository.isModelLoaded
+
+                        val statusText = when {
+                            isLoaded -> "🟢 Activo en memoria"
+                            isDownloaded -> "💾 Descargado (listo)"
+                            else -> "⬇️ Requiere descarga (${modelOpt.sizeLabel})"
+                        }
+
+                        Surface(
+                            color = if (isSelected) colors.accentSoft else colors.surfaceVariant,
+                            shape = RoundedCornerShape(14.dp),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(14.dp))
+                                .border(
+                                    width = if (isSelected) 1.5.dp else 1.dp,
+                                    color = if (isSelected) colors.accent else colors.divider,
+                                    shape = RoundedCornerShape(14.dp)
+                                )
+                                .clickable {
+                                    onSelectModel(modelOpt)
+                                    showModelDialog = false
+                                }
+                        ) {
+                            Column(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(horizontal = 14.dp, vertical = 12.dp)
+                            ) {
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.SpaceBetween
+                                ) {
+                                    Row(
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                    ) {
+                                        Text(
+                                            text = if (modelOpt.isGemma4) "✨" else "⚡",
+                                            fontSize = 14.sp
+                                        )
+                                        Text(
+                                            text = modelOpt.name,
+                                            color = onSurface,
+                                            fontWeight = FontWeight.Bold,
+                                            fontSize = 13.sp
+                                        )
+                                    }
+
+                                    if (modelOpt.isRecommended) {
+                                        Surface(
+                                            color = colors.accent,
+                                            shape = RoundedCornerShape(8.dp)
+                                        ) {
+                                            Text(
+                                                text = "Recomendado",
+                                                color = colors.sendButtonText,
+                                                fontSize = 9.sp,
+                                                fontWeight = FontWeight.Bold,
+                                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                                            )
+                                        }
+                                    }
+                                }
+
+                                Spacer(modifier = Modifier.height(4.dp))
+
+                                Text(
+                                    text = modelOpt.description,
+                                    color = onSurfaceSecondary,
+                                    fontSize = 11.sp,
+                                    lineHeight = 14.sp
+                                )
+
+                                Spacer(modifier = Modifier.height(6.dp))
+
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.SpaceBetween
+                                ) {
+                                    Text(
+                                        text = statusText,
+                                        color = if (isLoaded) colors.accent else onSurfaceSecondary,
+                                        fontSize = 11.sp,
+                                        fontWeight = if (isLoaded) FontWeight.SemiBold else FontWeight.Normal
+                                    )
+
+                                    Text(
+                                        text = modelOpt.sizeLabel,
+                                        color = onSurfaceSecondary,
+                                        fontSize = 11.sp,
+                                        fontWeight = FontWeight.Medium
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = { showModelDialog = false }) {
+                    Text("Cerrar", color = colors.accent)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = {
+                    showModelDialog = false
+                    filePickerLauncher.launch(arrayOf("*/*"))
+                }) {
+                    Text("Cargar otro (+)", color = onSurfaceSecondary)
                 }
             },
             containerColor = surfaceColor

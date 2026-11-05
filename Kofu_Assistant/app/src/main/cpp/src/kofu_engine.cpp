@@ -111,11 +111,19 @@ void KofuEngine::generate_stream_history(
     ModelFormat format = loader_->get_metadata().format;
     std::string backend_name = (format == ModelFormat::LITERT) ? "LiteRT C++ Engine" : "GGUF C++ Engine";
 
-    // Formatear prompt preservando turnos reales según la arquitectura Gemma
+    // Determinar estilo de turnos (Gemma 4 vs Gemma 2 / ChatML)
+    PromptStyle prompt_style = PromptStyle::GEMMA;
+    std::string model_fname = loader_->get_metadata().filename;
+    for (char& c : model_fname) c = std::tolower(static_cast<unsigned char>(c));
+    if (model_fname.find("gemma4") != std::string::npos || model_fname.find("gemma-4") != std::string::npos) {
+        prompt_style = PromptStyle::GEMMA_4;
+    }
+
+    // Formatear prompt preservando turnos reales según la arquitectura detectada
     std::string formatted_prompt = PromptFormatter::format_multi_turn_prompt(
         history,
         "Eres Kofu, un asistente de IA local útil, atento, privado y respetuoso. Responde de forma clara, precisa y concisa.",
-        PromptStyle::GEMMA
+        prompt_style
     );
 
     std::string last_user_query = "";

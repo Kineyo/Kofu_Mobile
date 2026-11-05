@@ -7,7 +7,7 @@ namespace kofu {
 
 std::string PromptFormatter::sanitize_input(std::string_view raw_prompt) {
     static const std::regex control_tokens_regex(
-        R"(<\|(?:begin_of_text|end_of_text|start_header_id|end_header_id|eot_id|im_start|im_end|system|user|assistant)\|>|<(?:start_of_turn|end_of_turn)>)",
+        R"(<\|(?:begin_of_text|end_of_text|start_header_id|end_header_id|eot_id|im_start|im_end|system|user|assistant|turn|channel)\|>|<(?:turn|channel)\|>(?:\n)?|<(?:start_of_turn|end_of_turn)>)",
         std::regex_constants::icase
     );
 
@@ -52,7 +52,30 @@ std::string PromptFormatter::format_multi_turn_prompt(
         }
     }
 
-    if (style == PromptStyle::GEMMA || style == PromptStyle::AUTO) {
+    if (style == PromptStyle::GEMMA_4) {
+        // Gemma 4 official Turn template:
+        // <|turn>user\n{system_msg}\n\n{clean}<turn|>\n<|turn>model\n{clean}<turn|>\n<|turn>model\n
+        bool first_user = true;
+        for (const auto& t : turns) {
+            if (t.role == "system") continue;
+
+            std::string clean = sanitize_input(t.content);
+            if (clean.empty()) continue;
+
+            if (t.role == "user") {
+                ss << "<|turn>user\n";
+                if (first_user && !system_msg.empty()) {
+                    ss << system_msg << "\n\n";
+                    first_user = false;
+                }
+                ss << clean << "<turn|>\n";
+            } else if (t.role == "model" || t.role == "assistant") {
+                ss << "<|turn>model\n" << clean << "<turn|>\n";
+            }
+        }
+        // Open turn for model generation
+        ss << "<|turn>model\n";
+    } else if (style == PromptStyle::GEMMA || style == PromptStyle::AUTO) {
         // Gemma 1 / Gemma 2 official Turn template:
         // System instruction is prepended to the first user turn
         bool first_user = true;

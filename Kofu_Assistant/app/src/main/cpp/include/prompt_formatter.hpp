@@ -11,7 +11,8 @@ enum class PromptStyle {
     AUTO = 0,
     GEMMA = 1,
     CHATML = 2,
-    LLAMA3 = 3
+    LLAMA3 = 3,
+    GEMMA_4 = 4
 };
 
 struct ChatTurn {
