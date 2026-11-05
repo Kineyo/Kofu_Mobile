@@ -246,16 +246,54 @@ fun ChatScreen(
             CompactTopAppBar(
                 serverReady = serverReady,
                 activeBackend = activeBackend,
-                isDebugActive = repository.isDebugMode,
-                onToggleDebug = {
-                    repository.isDebugMode = !repository.isDebugMode
-                    repository.savePreferences(context)
-                },
                 onOpenModelSelector = { showModelDialog = true },
                 onOpenSettings = { showSettingsDialog = true }
             )
 
-            if (downloadProgress != null) {
+            // INDICADOR DE DESCARGA AUTOMÁTICA DESDE HUGGING FACE
+            if (repository.isDownloadingModel) {
+                Surface(
+                    color = colors.surfaceVariant,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 12.dp, vertical = 4.dp),
+                    shape = KofuDesignSystem.CardShape,
+                    border = androidx.compose.foundation.BorderStroke(1.dp, colors.divider)
+                ) {
+                    Column(
+                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+                        verticalArrangement = Arrangement.spacedBy(4.dp)
+                    ) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                text = repository.downloadStatusText.ifBlank { "Descargando modelo desde Hugging Face..." },
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                color = colors.onSurface
+                            )
+                            Text(
+                                text = "${(repository.downloadProgress * 100).toInt()}%",
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.Bold,
+                                fontFamily = FontFamily.Monospace,
+                                color = colors.accent
+                            )
+                        }
+                        LinearProgressIndicator(
+                            progress = { repository.downloadProgress },
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(3.dp),
+                            color = colors.accent,
+                            trackColor = colors.inputBackground
+                        )
+                    }
+                }
+            } else if (downloadProgress != null) {
                 LinearProgressIndicator(
                     progress = { downloadProgress!! },
                     modifier = Modifier
@@ -266,15 +304,17 @@ fun ChatScreen(
                 )
             }
 
-            // HUD DE TELEMETRÍA COMPACTO
-            DebugHud(
-                metrics = repository.debugMetrics,
-                isVisible = repository.isDebugMode,
-                onClose = {
-                    repository.isDebugMode = false
-                    repository.savePreferences(context)
-                }
-            )
+            // HUD DE TELEMETRÍA (Solo visible si el usuario lo activa en Ajustes)
+            if (repository.isDebugMode) {
+                DebugHud(
+                    metrics = repository.debugMetrics,
+                    isVisible = true,
+                    onClose = {
+                        repository.isDebugMode = false
+                        repository.savePreferences(context)
+                    }
+                )
+            }
 
             // ÁREA DE CONVERSACIÓN PRINCIPAL
             Box(
@@ -460,8 +500,6 @@ fun ChatScreen(
 private fun CompactTopAppBar(
     serverReady: Boolean,
     activeBackend: InferenceBackend,
-    isDebugActive: Boolean,
-    onToggleDebug: () -> Unit,
     onOpenModelSelector: () -> Unit,
     onOpenSettings: () -> Unit
 ) {
@@ -508,9 +546,9 @@ private fun CompactTopAppBar(
                         ) {
                             Box(
                                 modifier = Modifier
-                                    .size(6.dp)
-                                    .clip(KofuDesignSystem.ButtonShape)
-                                    .background(if (serverReady) colors.successAccent else colors.warningAccent)
+                                .size(6.dp)
+                                .clip(KofuDesignSystem.ButtonShape)
+                                .background(if (serverReady) colors.successAccent else colors.warningAccent)
                             )
                             Text(
                                 text = if (serverReady) {
@@ -525,44 +563,17 @@ private fun CompactTopAppBar(
                     }
                 }
 
-                // Acciones: Toggle DEBUG y Ajustes
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(4.dp)
+                // Acción: Ajustes
+                IconButton(
+                    onClick = onOpenSettings,
+                    modifier = Modifier.size(32.dp)
                 ) {
-                    Surface(
-                        color = if (isDebugActive) colors.accentSoft else colors.surfaceVariant,
-                        shape = KofuDesignSystem.ButtonShape,
-                        modifier = Modifier
-                            .clip(KofuDesignSystem.ButtonShape)
-                            .border(
-                                1.dp,
-                                if (isDebugActive) colors.onSurfaceSecondary else colors.divider,
-                                KofuDesignSystem.ButtonShape
-                            )
-                            .clickable { onToggleDebug() }
-                    ) {
-                        Text(
-                            text = "DEBUG",
-                            fontSize = 10.sp,
-                            fontWeight = FontWeight.Bold,
-                            fontFamily = FontFamily.Monospace,
-                            color = if (isDebugActive) colors.onSurface else colors.onSurfaceMuted,
-                            modifier = Modifier.padding(horizontal = 7.dp, vertical = 5.dp)
-                        )
-                    }
-
-                    IconButton(
-                        onClick = onOpenSettings,
-                        modifier = Modifier.size(32.dp)
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.Settings,
-                            contentDescription = "Ajustes",
-                            tint = colors.onSurfaceSecondary,
-                            modifier = Modifier.size(17.dp)
-                        )
-                    }
+                    Icon(
+                        imageVector = Icons.Default.Settings,
+                        contentDescription = "Ajustes",
+                        tint = colors.onSurfaceSecondary,
+                        modifier = Modifier.size(17.dp)
+                    )
                 }
             }
 
@@ -891,6 +902,8 @@ private fun FormalModelDialog(
     onSelectCustomFile: () -> Unit
 ) {
     val colors = LocalKofuColors.current
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
 
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -987,6 +1000,7 @@ private fun FormalModelDialog(
                             )
                             .clickable {
                                 repository.selectedModel = modelOpt
+                                repository.startAutoDownloadIfNeeded(context, scope)
                                 onDismiss()
                             }
                     ) {

@@ -10,6 +10,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.callbackFlow
@@ -93,9 +94,15 @@ object LlamaRepository {
         "Eres Kofu, un asistente de IA local útil, atento, privado y respetuoso. Responde de forma clara, precisa y concisa en español."
     )
 
-    // Modo de Depuración
-    var isDebugMode: Boolean by mutableStateOf(true)
+    // Modo de Depuración (desactivado por defecto)
+    var isDebugMode: Boolean by mutableStateOf(false)
     var debugMetrics: DebugMetrics by mutableStateOf(DebugMetrics())
+
+    // Estado de descarga automática desde Hugging Face
+    var isDownloadingModel: Boolean by mutableStateOf(false)
+    var downloadProgress: Float by mutableStateOf(0f)
+    var downloadStatusText: String by mutableStateOf("")
+    private var downloadJob: Job? = null
 
     val ollamaClient: OllamaClient = OllamaClient(ollamaHost)
     private val supportedExtensions = listOf(".litertlm", ".task", ".tflite", ".bin", ".gguf")
@@ -151,7 +158,7 @@ object LlamaRepository {
         repeatPenalty = prefs.getFloat("repeat_penalty", 1.1f)
         maxTokens = prefs.getInt("max_tokens", 2048)
         systemPrompt = prefs.getString("system_prompt", systemPrompt) ?: systemPrompt
-        isDebugMode = prefs.getBoolean("debug_mode", true)
+        isDebugMode = prefs.getBoolean("debug_mode", false)
 
         ollamaClient.updateBaseUrl(ollamaHost)
     }
@@ -534,6 +541,86 @@ object LlamaRepository {
 
         // 3. Descargar el modelo seleccionado
         downloadModel(context, selectedModel, onProgress, onComplete, onError)
+    }
+
+    fun cancelDownload() {
+        downloadJob?.cancel()
+        downloadJob = null
+        isDownloadingModel = false
+        downloadStatusText = "Descarga cancelada"
+    }
+
+    /**
+     * Inicia automáticamente la comprobación y descarga por defecto del modelo desde Hugging Face
+     * si no existe un modelo local cargado previamente.
+     */
+    fun startAutoDownloadIfNeeded(context: Context, scope: CoroutineScope) {
+        val externalDir = context.getExternalFilesDir(null) ?: return
+
+        // 1. Si ya hay un modelo cargado en el motor C++, no hacer nada
+        if (KofuNativeEngine.nativeIsModelLoaded()) {
+            return
+        }
+
+        // 2. Comprobar si el modelo seleccionado ya existe en el almacenamiento
+        val selectedFile = getLocalModelFile(context, selectedModel)
+        if (selectedFile != null) {
+            Log.i(TAG, "Modelo seleccionado encontrado localmente: ${selectedFile.name}. Cargando...")
+            loadModel(context, Uri.fromFile(selectedFile), scope)
+            return
+        }
+
+        // 3. Comprobar si existe cualquier otro modelo oficial localmente
+        for (m in AVAILABLE_MODELS) {
+            val local = getLocalModelFile(context, m)
+            if (local != null) {
+                selectedModel = m
+                Log.i(TAG, "Modelo alternativo encontrado localmente: ${local.name}. Cargando...")
+                loadModel(context, Uri.fromFile(local), scope)
+                return
+            }
+        }
+
+        // 4. Si no existe ninguno, iniciar descarga automática por defecto desde Hugging Face
+        if (isDownloadingModel) return
+
+        Log.i(TAG, "Iniciando descarga automática por defecto de ${selectedModel.name} desde Hugging Face...")
+        isDownloadingModel = true
+        downloadProgress = 0f
+        downloadStatusText = "Conectando con Hugging Face..."
+
+        downloadJob = CoroutineScope(Dispatchers.IO).launch {
+            val client = OkHttpClient.Builder()
+                .connectTimeout(30, TimeUnit.SECONDS)
+                .readTimeout(180, TimeUnit.SECONDS)
+                .writeTimeout(60, TimeUnit.SECONDS)
+                .followRedirects(true)
+                .followSslRedirects(true)
+                .build()
+
+            val targetFile = File(externalDir, selectedModel.fileName)
+            val success = tryDownloadFileWithResume(
+                client = client,
+                url = selectedModel.downloadUrl,
+                targetFile = targetFile,
+                onProgress = { p ->
+                    downloadProgress = p
+                    downloadStatusText = "Descargando ${selectedModel.shortName} (${(p * 100).toInt()}%)"
+                }
+            )
+
+            withContext(Dispatchers.Main) {
+                isDownloadingModel = false
+                if (success && targetFile.length() > 50L * 1024L * 1024L) {
+                    downloadStatusText = "Descarga completada"
+                    Log.i(TAG, "Descarga completada con éxito. Cargando modelo...")
+                    loadModel(context, Uri.fromFile(targetFile), scope)
+                } else {
+                    downloadStatusText = "Descarga pendiente"
+                    Log.w(TAG, "No se completó la descarga del modelo ${selectedModel.shortName}")
+                }
+            }
+        }
     }
 
     private suspend fun tryDownloadFileWithResume(

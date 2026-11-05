@@ -44,6 +44,9 @@ class MainActivity : ComponentActivity() {
         // Detección automática del servidor Ollama (laptop por ADB reverse o red local)
         repository.probeOllama(lifecycleScope)
 
+        // Descarga automática por defecto del modelo desde Hugging Face
+        repository.startAutoDownloadIfNeeded(this, lifecycleScope)
+
         setContent {
             var themeMode by rememberSaveable { mutableStateOf(initialThemeMode) }
             var fontScale by rememberSaveable { mutableStateOf(initialFontScale) }
