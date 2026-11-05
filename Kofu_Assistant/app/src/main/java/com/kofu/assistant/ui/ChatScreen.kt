@@ -1,5 +1,6 @@
 package com.kofu.assistant.ui
 
+import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
@@ -21,7 +22,6 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -37,7 +37,6 @@ import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.Add
@@ -45,16 +44,11 @@ import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Info
-import androidx.compose.material.icons.filled.MoreVert
+import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Settings
-import androidx.compose.ui.platform.LocalClipboardManager
-import androidx.compose.ui.text.AnnotatedString
-import androidx.compose.ui.text.font.FontFamily
-import com.kofu.assistant.repository.TurnMessage
-import com.kofu.assistant.repository.ModelOption
 import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.DropdownMenu
-import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -78,20 +72,27 @@ import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
-import androidx.compose.ui.unit.DpOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import coil.compose.AsyncImage
-import coil.request.ImageRequest
 import com.kofu.assistant.repository.InferenceBackend
 import com.kofu.assistant.repository.LlamaRepository
+import com.kofu.assistant.repository.ModelOption
+import com.kofu.assistant.repository.TurnMessage
+import com.kofu.assistant.ui.components.DebugHud
+import com.kofu.assistant.ui.components.SettingsDialog
+import com.kofu.assistant.ui.components.TermsDialog
+import com.kofu.assistant.ui.theme.KofuDesignSystem
+import com.kofu.assistant.ui.theme.KofuFontScale
 import com.kofu.assistant.ui.theme.KofuThemeMode
 import com.kofu.assistant.ui.theme.LocalKofuColors
+import com.kofu.assistant.ui.theme.LocalKofuFontScale
 import kotlinx.coroutines.launch
 import java.util.UUID
 
@@ -101,29 +102,33 @@ data class ChatMessage(
     val id: String = UUID.randomUUID().toString(),
     val sender: MessageSender,
     val text: String,
-    val isPending: Boolean = false
+    val isPending: Boolean = false,
+    val timestamp: String = ""
 )
 
 private val QUICK_PROMPTS = listOf(
     "✨ ¿Cómo puedes ayudarme hoy?",
-    "🔍 Explícame un concepto paso a paso",
-    "📋 Ayúdame a organizar mi día",
-    "💡 Dame ideas para un proyecto"
+    "💻 Explica qué es un puntero en C++ con un ejemplo",
+    "🔒 ¿Por qué es más segura la IA local frente a la nube?",
+    "🚀 Escribe una función recursiva para la serie Fibonacci en Python"
 )
 
 private const val WELCOME_MESSAGE =
-    "¡Hola! Soy Kofu, tu asistente personal con IA local. ¿En qué te puedo ayudar hoy?"
+    "¡Hola! Soy Kofu, tu asistente de IA de alto rendimiento con procesamiento 100% privado. ¿En qué te puedo ayudar hoy?"
 
 @Composable
 fun ChatScreen(
     repository: LlamaRepository,
-    themeMode: KofuThemeMode = KofuThemeMode.SYSTEM,
-    onChangeThemeMode: (KofuThemeMode) -> Unit = {}
+    themeMode: KofuThemeMode = KofuThemeMode.DARK,
+    onChangeThemeMode: (KofuThemeMode) -> Unit = {},
+    fontScale: KofuFontScale = KofuFontScale.STANDARD,
+    onChangeFontScale: (KofuFontScale) -> Unit = {}
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val listState = rememberLazyListState()
     val colors = LocalKofuColors.current
+    val currentFontScale = LocalKofuFontScale.current
 
     val backgroundColor = colors.background
     val surfaceColor = colors.surface
@@ -137,13 +142,13 @@ fun ChatScreen(
     val inputBorderFocused = colors.inputBorderFocused
     val sendBtnColor = colors.sendButton
     val sendBtnDisabled = colors.sendButtonDisabled
-    val headerOverlay = colors.headerOverlay
 
     var inputText by remember { mutableStateOf("") }
     var isSending by remember { mutableStateOf(false) }
-    var showMenu by remember { mutableStateOf(false) }
-    var showThemeDialog by remember { mutableStateOf(false) }
-    var showAboutDialog by remember { mutableStateOf(false) }
+
+    // Diálogos modales
+    var showSettingsDialog by remember { mutableStateOf(false) }
+    var showTermsDialog by remember { mutableStateOf(false) }
     var showModelDialog by remember { mutableStateOf(false) }
 
     var downloadProgress by remember { mutableStateOf<Float?>(null) }
@@ -152,55 +157,6 @@ fun ChatScreen(
     val serverReady = repository.isModelLoaded
     val activeBackend = repository.activeBackend
     val currentModelName = repository.currentModelName
-
-    fun onSelectModel(modelOption: ModelOption) {
-        if (repository.isModelDownloaded(context, modelOption)) {
-            repository.switchModel(context, modelOption, scope) {}
-        } else {
-            downloadProgress = 0f
-            downloadError = null
-            repository.downloadModel(
-                context = context,
-                modelOption = modelOption,
-                onProgress = { downloadProgress = it },
-                onComplete = { uri ->
-                    downloadProgress = null
-                    downloadError = null
-                    repository.loadModel(context, uri, scope)
-                },
-                onError = { error ->
-                    downloadProgress = null
-                    downloadError = "Error descargando ${modelOption.shortName}: $error"
-                }
-            )
-        }
-    }
-
-    val serverStatus = when {
-        serverReady -> "Modelo $currentModelName listo"
-        downloadError != null -> downloadError!!
-        downloadProgress != null -> "Descargando ${repository.selectedModel.shortName}... ${(downloadProgress!! * 100).toInt()}%"
-        else -> "Preparando motor local..."
-    }
-    val serverProgress: Float? = downloadProgress
-
-    LaunchedEffect(Unit) {
-        if (!repository.isModelLoaded) {
-            repository.downloadDefaultModel(
-                context = context,
-                onProgress = { downloadProgress = it },
-                onComplete = { uri ->
-                    downloadProgress = null
-                    downloadError = null
-                    repository.loadModel(context, uri, scope)
-                },
-                onError = { error ->
-                    downloadProgress = null
-                    downloadError = "Sin modelo ($error). Toca '+' para cargar (.litertlm / .gguf)."
-                }
-            )
-        }
-    }
 
     val filePickerLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.OpenDocument()
@@ -234,7 +190,7 @@ fun ChatScreen(
             ChatMessage(
                 id = pendingId,
                 sender = MessageSender.KOFU,
-                text = "Kofu está pensando...",
+                text = "Kofu está procesando...",
                 isPending = true
             )
         )
@@ -244,7 +200,6 @@ fun ChatScreen(
                 var accumulatedText = ""
                 var isFirstChunk = true
 
-                // Kofu v2.0: Memoria multi-turno completa de la conversación
                 val historyTurns = messages
                     .filter { !it.isPending && it.text.isNotBlank() }
                     .map { TurnMessage(if (it.sender == MessageSender.USER) "user" else "model", it.text) }
@@ -272,19 +227,19 @@ fun ChatScreen(
                         messages[index] = ChatMessage(
                             id = pendingId,
                             sender = MessageSender.KOFU,
-                            text = "No pude generar una respuesta en este momento.",
+                            text = "No se recibió respuesta del modelo.",
                             isPending = false
                         )
                     }
                 }
             } catch (e: Exception) {
-                android.util.Log.e("ChatScreen", "Error during prompt generation", e)
+                android.util.Log.e("ChatScreen", "Error durante inferencia", e)
                 val index = messages.indexOfFirst { it.id == pendingId }
                 if (index != -1) {
                     messages[index] = ChatMessage(
                         id = pendingId,
                         sender = MessageSender.KOFU,
-                        text = "Error del motor local: ${e.localizedMessage}",
+                        text = "Error del motor: ${e.localizedMessage ?: "Fallo de conexión"}",
                         isPending = false
                     )
                 }
@@ -294,7 +249,7 @@ fun ChatScreen(
         }
     }
 
-    // Scroll to bottom when new messages arrive
+    // Scroll al último mensaje automáticamente
     LaunchedEffect(messages.size, messages.lastOrNull()?.text) {
         if (messages.isNotEmpty()) {
             listState.animateScrollToItem(messages.size - 1)
@@ -306,137 +261,112 @@ fun ChatScreen(
             .fillMaxSize()
             .background(backgroundColor)
     ) {
-        val glowColor = colors.accent.copy(alpha = if (colors.isDark) 0.14f else 0.08f)
-
-        // CAPA 2: Character Layer — transparent container with ambient radial aura
-        Box(
-            modifier = Modifier
-                .fillMaxWidth()
-                .fillMaxHeight(0.46f)
-                .align(Alignment.TopCenter)
-                .padding(top = 76.dp),
-            contentAlignment = Alignment.Center
-        ) {
-            Box(
-                modifier = Modifier
-                    .size(220.dp)
-                    .clip(CircleShape)
-                    .background(
-                        Brush.radialGradient(
-                            colors = listOf(glowColor, Color.Transparent)
-                        )
-                    )
-            )
-            AsyncImage(
-                model = ImageRequest.Builder(context)
-                    .data("file:///android_asset/avatar_kofu.png")
-                    .crossfade(true)
-                    .build(),
-                contentDescription = "Avatar de Kofu",
-                contentScale = ContentScale.Fit,
-                modifier = Modifier.fillMaxHeight(0.86f)
-            )
-        }
-
-        // CAPA 1: Messages & Input Layer — bottom 54%
         Column(
             modifier = Modifier
-                .fillMaxWidth()
-                .fillMaxHeight(0.54f)
-                .align(Alignment.BottomCenter)
-                .imePadding()
+                .fillMaxSize()
+                .statusBarsPadding()
         ) {
-            LazyColumn(
-                state = listState,
+            // HEADER SUPERIOR LIMPIO Y MODERNO
+            ModernTopAppBar(
+                repository = repository,
+                serverReady = serverReady,
+                activeBackend = activeBackend,
+                currentModelName = currentModelName,
+                isDebugActive = repository.isDebugMode,
+                onToggleDebug = {
+                    repository.isDebugMode = !repository.isDebugMode
+                    repository.savePreferences(context)
+                },
+                onOpenModelSelector = { showModelDialog = true },
+                onOpenSettings = { showSettingsDialog = true }
+            )
+
+            // BARRA DE PROGRESO DE DESCARGA / CARGA SI APLICA
+            if (downloadProgress != null) {
+                LinearProgressIndicator(
+                    progress = { downloadProgress!! },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(3.dp),
+                    color = colors.accent,
+                    trackColor = colors.surfaceVariant
+                )
+            }
+
+            // HUD DE DEPURACIÓN EN VIVO (CUANDO ESTÁ ACTIVADO)
+            DebugHud(
+                metrics = repository.debugMetrics,
+                isVisible = repository.isDebugMode,
+                onClose = {
+                    repository.isDebugMode = false
+                    repository.savePreferences(context)
+                }
+            )
+
+            // ÁREA PRINCIPAL DE CHAT (OCUPA TODO EL ALTO NATURAL)
+            Box(
                 modifier = Modifier
                     .weight(1f)
                     .fillMaxWidth()
-                    .padding(horizontal = 14.dp),
-                contentPadding = PaddingValues(vertical = 8.dp),
-                verticalArrangement = Arrangement.spacedBy(10.dp)
             ) {
-                items(messages, key = { it.id }) { msg ->
-                    AnimatedVisibility(
-                        visible = true,
-                        enter = fadeIn(animationSpec = tween(350)) +
-                                slideInVertically(
-                                    animationSpec = tween(350),
-                                    initialOffsetY = { it / 3 }
-                                )
-                    ) {
-                        ChatBubble(
-                            message = msg,
-                            userBubbleColor = userBubbleColor,
-                            userBubbleText = userBubbleText,
-                            kofuBubbleColor = colors.kofuBubble,
-                            kofuBubbleBorder = colors.kofuBubbleBorder,
-                            kofuTextColor = kofuTextColor,
-                            accentColor = colors.accent
-                        )
-                    }
-                }
-            }
-
-            // Quick Prompts when only welcome message is present
-            AnimatedVisibility(
-                visible = messages.size <= 1,
-                enter = fadeIn(tween(300)),
-                exit = fadeOut(tween(200))
-            ) {
-                LazyRow(
+                LazyColumn(
+                    state = listState,
                     modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(bottom = 6.dp),
-                    contentPadding = PaddingValues(horizontal = 14.dp),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        .fillMaxSize()
+                        .padding(horizontal = 14.dp),
+                    contentPadding = PaddingValues(top = 10.dp, bottom = 10.dp),
+                    verticalArrangement = Arrangement.spacedBy(12.dp)
                 ) {
-                    items(QUICK_PROMPTS) { prompt ->
-                        val cleanPrompt = prompt.substringAfter(" ").trim()
-                        Surface(
-                            shape = RoundedCornerShape(18.dp),
-                            color = colors.surfaceVariant.copy(alpha = 0.9f),
-                            modifier = Modifier
-                                .clip(RoundedCornerShape(18.dp))
-                                .border(
-                                    width = 1.dp,
-                                    color = colors.inputBorder,
-                                    shape = RoundedCornerShape(18.dp)
-                                )
-                                .clickable(enabled = !isSending) {
+                    // HERO CARD CUANDO LA CONVERSACIÓN ESTÁ INICIANDO
+                    if (messages.size <= 1) {
+                        item {
+                            HeroWelcomeCard(
+                                repository = repository,
+                                onPromptSelected = { prompt ->
                                     if (serverReady) {
-                                        sendMessage(cleanPrompt)
+                                        sendMessage(prompt)
                                     } else {
-                                        inputText = cleanPrompt
+                                        inputText = prompt
                                     }
-                                }
-                        ) {
-                            Text(
-                                text = prompt,
-                                color = onSurface,
-                                fontSize = 12.sp,
-                                fontWeight = FontWeight.Medium,
-                                modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp)
+                                },
+                                onOpenTerms = { showTermsDialog = true }
+                            )
+                        }
+                    } else {
+                        items(messages, key = { it.id }) { msg ->
+                            ModernChatBubble(
+                                message = msg,
+                                userBubbleColor = userBubbleColor,
+                                userBubbleText = userBubbleText,
+                                kofuBubbleColor = colors.kofuBubble,
+                                kofuBubbleBorder = colors.kofuBubbleBorder,
+                                kofuTextColor = kofuTextColor,
+                                accentColor = colors.accent,
+                                fontScale = currentFontScale
                             )
                         }
                     }
                 }
             }
 
-            // Input Bar
+            // BARRA DE ENTRADA MODERNA CON BORDES DEFINIDOS (10.dp)
             Surface(
-                color = surfaceColor.copy(alpha = 0.96f),
-                tonalElevation = 4.dp,
+                color = surfaceColor,
+                tonalElevation = 6.dp,
                 modifier = Modifier
                     .fillMaxWidth()
                     .navigationBarsPadding()
+                    .imePadding()
             ) {
                 Column {
                     HorizontalDivider(color = colors.divider, thickness = 1.dp)
+
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .padding(horizontal = 12.dp, vertical = 10.dp),
-                        verticalAlignment = Alignment.CenterVertically
+                            .padding(horizontal = 12.dp, vertical = 8.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
                         OutlinedTextField(
                             value = inputText,
@@ -444,9 +374,9 @@ fun ChatScreen(
                             enabled = serverReady,
                             placeholder = {
                                 Text(
-                                    text = if (serverReady) "Escribe un mensaje a Kofu..." else serverStatus,
+                                    text = if (serverReady) "Escribe tu consulta a Kofu..." else "Conectando al servidor o motor...",
                                     color = onSurfaceSecondary,
-                                    fontSize = 14.sp,
+                                    fontSize = currentFontScale.bodySp.sp,
                                     maxLines = 1,
                                     overflow = TextOverflow.Ellipsis
                                 )
@@ -454,817 +384,460 @@ fun ChatScreen(
                             modifier = Modifier.weight(1f),
                             singleLine = false,
                             maxLines = 4,
-                            shape = RoundedCornerShape(24.dp),
-                            textStyle = TextStyle(color = onSurface, fontSize = 14.sp),
+                            shape = KofuDesignSystem.InputShape,
+                            textStyle = TextStyle(
+                                color = onSurface,
+                                fontSize = currentFontScale.bodySp.sp,
+                                lineHeight = (currentFontScale.bodySp + 4).sp
+                            ),
                             colors = OutlinedTextFieldDefaults.colors(
                                 focusedContainerColor = inputBg,
                                 unfocusedContainerColor = inputBg,
-                                disabledContainerColor = inputBg.copy(alpha = 0.6f),
+                                disabledContainerColor = inputBg.copy(alpha = 0.5f),
                                 focusedTextColor = onSurface,
                                 unfocusedTextColor = onSurface,
                                 disabledTextColor = onSurfaceSecondary,
                                 focusedBorderColor = inputBorderFocused,
                                 unfocusedBorderColor = inputBorder,
-                                disabledBorderColor = inputBorder.copy(alpha = 0.5f),
+                                disabledBorderColor = inputBorder.copy(alpha = 0.4f),
                                 cursorColor = colors.accent
                             )
                         )
 
-                        Spacer(modifier = Modifier.width(8.dp))
-
                         val canSend = inputText.isNotBlank() && !isSending && serverReady
                         val currentBtnColor by animateColorAsState(
-                            targetValue = if (isSending) colors.accent else if (canSend) sendBtnColor else sendBtnDisabled,
-                            animationSpec = tween(250),
-                            label = "sendBtn"
+                            targetValue = if (isSending) colors.errorAccent else if (canSend) sendBtnColor else sendBtnDisabled,
+                            animationSpec = tween(200),
+                            label = "sendBtnAnim"
                         )
 
-                        IconButton(
-                            onClick = {
-                                if (isSending) {
-                                    repository.cancelGeneration()
-                                    isSending = false
-                                } else if (canSend) {
-                                    sendMessage(inputText)
-                                }
-                            },
-                            enabled = isSending || canSend,
+                        // Botón de Enviar con forma moderna menos redondeada (8dp - 10dp)
+                        Surface(
+                            shape = KofuDesignSystem.ButtonShape,
+                            color = currentBtnColor,
                             modifier = Modifier
                                 .size(46.dp)
-                                .clip(CircleShape)
-                                .background(currentBtnColor)
+                                .clip(KofuDesignSystem.ButtonShape)
+                                .clickable(enabled = isSending || canSend) {
+                                    if (isSending) {
+                                        repository.cancelGeneration()
+                                        isSending = false
+                                    } else if (canSend) {
+                                        sendMessage(inputText)
+                                    }
+                                }
                         ) {
-                            Icon(
-                                imageVector = if (isSending) Icons.Default.Close else Icons.AutoMirrored.Filled.Send,
-                                contentDescription = if (isSending) "Detener generación" else "Enviar mensaje",
-                                tint = if (isSending || canSend) colors.sendButtonText else onSurfaceSecondary,
-                                modifier = Modifier.size(20.dp)
-                            )
+                            Box(contentAlignment = Alignment.Center) {
+                                Icon(
+                                    imageVector = if (isSending) Icons.Default.Close else Icons.AutoMirrored.Filled.Send,
+                                    contentDescription = if (isSending) "Detener" else "Enviar",
+                                    tint = if (isSending || canSend) colors.sendButtonText else onSurfaceSecondary,
+                                    modifier = Modifier.size(20.dp)
+                                )
+                            }
                         }
                     }
                 }
             }
         }
+    }
 
-        // CAPA 3: Modern Header with Gradient Overlay & Backend Badge
-        Box(
-            modifier = Modifier
-                .fillMaxWidth()
-                .align(Alignment.TopCenter)
-                .background(
-                    Brush.verticalGradient(
-                        colors = listOf(
-                            headerOverlay.copy(alpha = 0.96f),
-                            headerOverlay.copy(alpha = 0.80f),
-                            headerOverlay.copy(alpha = 0.0f)
-                        )
-                    )
+    // MODAL DE AJUSTES EXTENSO
+    SettingsDialog(
+        isOpen = showSettingsDialog,
+        repository = repository,
+        themeMode = themeMode,
+        onChangeThemeMode = onChangeThemeMode,
+        fontScale = fontScale,
+        onChangeFontScale = onChangeFontScale,
+        onOpenTerms = { showTermsDialog = true },
+        onClearChat = {
+            messages.clear()
+            messages.add(
+                ChatMessage(
+                    sender = MessageSender.KOFU,
+                    text = WELCOME_MESSAGE
                 )
-                .statusBarsPadding()
-                .padding(horizontal = 16.dp, vertical = 10.dp)
+            )
+        },
+        onDismiss = { showSettingsDialog = false }
+    )
+
+    // MODAL DE TÉRMINOS Y PRIVACIDAD
+    TermsDialog(
+        isOpen = showTermsDialog,
+        onDismiss = { showTermsDialog = false }
+    )
+
+    // MODAL DE SELECCIÓN DE MODELO
+    if (showModelDialog) {
+        ModelSelectorDialog(
+            repository = repository,
+            onDismiss = { showModelDialog = false },
+            onSelectCustomFile = {
+                showModelDialog = false
+                filePickerLauncher.launch(arrayOf("*/*"))
+            }
+        )
+    }
+}
+
+/**
+ * Top App Bar moderno y legible con bordes precisos, badges de estado y botones accesibles.
+ */
+@Composable
+private fun ModernTopAppBar(
+    repository: LlamaRepository,
+    serverReady: Boolean,
+    activeBackend: InferenceBackend,
+    currentModelName: String,
+    isDebugActive: Boolean,
+    onToggleDebug: () -> Unit,
+    onOpenModelSelector: () -> Unit,
+    onOpenSettings: () -> Unit
+) {
+    val colors = LocalKofuColors.current
+
+    Surface(
+        color = colors.surface,
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Column {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 14.dp, vertical = 8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                // LADO IZQUIERDO: Nombre y Estado de Inferencia
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Text(
+                        text = "Kofu",
+                        fontWeight = FontWeight.ExtraBold,
+                        color = colors.onSurface,
+                        fontSize = 20.sp,
+                        letterSpacing = (-0.5).sp
+                    )
+
+                    // Indicador de Estado y Backend
+                    Surface(
+                        color = if (serverReady) colors.accentSoft else colors.surfaceVariant,
+                        shape = KofuDesignSystem.ButtonShape,
+                        modifier = Modifier
+                            .clip(KofuDesignSystem.ButtonShape)
+                            .border(
+                                1.dp,
+                                if (serverReady) colors.accent.copy(alpha = 0.4f) else colors.divider,
+                                KofuDesignSystem.ButtonShape
+                            )
+                            .clickable { onOpenModelSelector() }
+                    ) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(5.dp),
+                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                        ) {
+                            Box(
+                                modifier = Modifier
+                                    .size(7.dp)
+                                    .clip(CircleShape)
+                                    .background(if (serverReady) colors.successAccent else colors.warningAccent)
+                            )
+                            Text(
+                                text = if (serverReady) {
+                                    if (activeBackend == InferenceBackend.OLLAMA_SERVER) "Ollama Laptop" else activeBackend.badgeLabel
+                                } else "Conectando...",
+                                color = if (serverReady) colors.accent else colors.onSurfaceSecondary,
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
+                    }
+                }
+
+                // LADO DERECHO: Botón Debug, Selector de Modelo y Ajustes
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(4.dp)
+                ) {
+                    // Botón de Alternancia de Debug
+                    Surface(
+                        color = if (isDebugActive) colors.accent else colors.surfaceVariant,
+                        shape = KofuDesignSystem.ButtonShape,
+                        modifier = Modifier
+                            .clip(KofuDesignSystem.ButtonShape)
+                            .clickable { onToggleDebug() }
+                    ) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 6.dp)
+                        ) {
+                            Text(
+                                text = if (isDebugActive) "🐞 HUD ON" else "🐞 HUD",
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = if (isDebugActive) colors.sendButtonText else colors.onSurfaceSecondary
+                            )
+                        }
+                    }
+
+                    // Botón de Ajustes (Engranaje)
+                    IconButton(
+                        onClick = onOpenSettings,
+                        modifier = Modifier.size(36.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Settings,
+                            contentDescription = "Ajustes",
+                            tint = colors.onSurface,
+                            modifier = Modifier.size(20.dp)
+                        )
+                    }
+                }
+            }
+
+            HorizontalDivider(color = colors.divider, thickness = 1.dp)
+        }
+    }
+}
+
+/**
+ * Hero Card elegante que aparece al inicio con información clave, garantías de privacidad y sugerencias rápidas.
+ */
+@Composable
+private fun HeroWelcomeCard(
+    repository: LlamaRepository,
+    onPromptSelected: (String) -> Unit,
+    onOpenTerms: () -> Unit
+) {
+    val colors = LocalKofuColors.current
+
+    Surface(
+        color = colors.surfaceVariant,
+        shape = KofuDesignSystem.CardShape,
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(KofuDesignSystem.CardShape)
+            .border(1.dp, colors.divider, KofuDesignSystem.CardShape)
+    ) {
+        Column(
+            modifier = Modifier.padding(14.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp)
         ) {
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.SpaceBetween
             ) {
-                Column(
-                    modifier = Modifier
-                        .weight(1f)
-                        .clip(RoundedCornerShape(12.dp))
-                        .clickable {
-                            filePickerLauncher.launch(arrayOf("*/*"))
-                        }
-                        .padding(vertical = 4.dp, horizontal = 4.dp)
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    Surface(
+                        color = colors.accentSoft,
+                        shape = KofuDesignSystem.ButtonShape,
+                        modifier = Modifier.size(32.dp)
                     ) {
-                        Text(
-                            text = "Kofu",
-                            fontWeight = FontWeight.ExtraBold,
-                            color = onSurface,
-                            fontSize = 22.sp
-                        )
-
-                        // Active Backend Chip (LiteRT vs GGUF Fallback)
-                        BackendBadge(
-                            backend = activeBackend,
-                            isModelLoaded = serverReady
-                        )
-                    }
-
-                    Spacer(modifier = Modifier.height(2.dp))
-
-                    Text(
-                        text = serverStatus,
-                        color = if (!serverReady && downloadError != null) colors.errorAccent else onSurfaceSecondary,
-                        fontSize = 12.sp,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
-                    )
-
-                    if (!serverReady && downloadError == null) {
-                        Spacer(modifier = Modifier.height(6.dp))
-                        val currentProgress = serverProgress
-                        if (currentProgress != null) {
-                            LinearProgressIndicator(
-                                progress = { currentProgress },
-                                modifier = Modifier
-                                    .width(160.dp)
-                                    .height(3.dp)
-                                    .clip(RoundedCornerShape(2.dp)),
-                                color = colors.accent,
-                                trackColor = colors.surfaceVariant
-                            )
-                        } else {
-                            LinearProgressIndicator(
-                                modifier = Modifier
-                                    .width(160.dp)
-                                    .height(3.dp)
-                                    .clip(RoundedCornerShape(2.dp)),
-                                color = colors.accent,
-                                trackColor = colors.surfaceVariant
-                            )
+                        Box(contentAlignment = Alignment.Center) {
+                            Text(text = "🧠", fontSize = 16.sp)
                         }
+                    }
+                    Column {
+                        Text(
+                            text = "Kofu Assistant v2.0",
+                            fontWeight = FontWeight.ExtraBold,
+                            color = colors.onSurface,
+                            fontSize = 15.sp
+                        )
+                        Text(
+                            text = "Inferencia Local • Google Gemma",
+                            color = colors.onSurfaceSecondary,
+                            fontSize = 11.sp
+                        )
                     }
                 }
 
-                // Right side actions: Model Pill + Theme Pill + Load Model (+) + Menu
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(4.dp)
+                Surface(
+                    color = colors.surface,
+                    shape = KofuDesignSystem.ButtonShape,
+                    modifier = Modifier
+                        .clip(KofuDesignSystem.ButtonShape)
+                        .border(1.dp, colors.divider, KofuDesignSystem.ButtonShape)
+                        .clickable { onOpenTerms() }
                 ) {
-                    // Quick Model Selector Pill button
-                    Surface(
-                        color = colors.accentSoft.copy(alpha = if (colors.isDark) 0.6f else 0.4f),
-                        shape = RoundedCornerShape(50),
-                        modifier = Modifier
-                            .clip(RoundedCornerShape(50))
-                            .border(1.dp, colors.accent.copy(alpha = 0.5f), RoundedCornerShape(50))
-                            .clickable { showModelDialog = true }
-                    ) {
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            modifier = Modifier.padding(horizontal = 9.dp, vertical = 6.dp)
-                        ) {
-                            Text(
-                                text = if (repository.selectedModel.isGemma4) "✨" else "⚡",
-                                fontSize = 11.sp
-                            )
-                            Spacer(modifier = Modifier.width(4.dp))
-                            Text(
-                                text = repository.selectedModel.shortName,
-                                color = colors.accent,
-                                fontSize = 11.sp,
-                                fontWeight = FontWeight.Bold
-                            )
-                        }
-                    }
+                    Text(
+                        text = "📜 Términos",
+                        fontSize = 10.sp,
+                        color = colors.accent,
+                        fontWeight = FontWeight.Bold,
+                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                    )
+                }
+            }
 
-                    // Quick Theme Mode Pill button
-                    Surface(
-                        color = colors.surfaceVariant.copy(alpha = 0.85f),
-                        shape = RoundedCornerShape(50),
-                        modifier = Modifier
-                            .clip(RoundedCornerShape(50))
-                            .border(1.dp, colors.divider, RoundedCornerShape(50))
-                            .clickable { showThemeDialog = true }
-                    ) {
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp)
-                        ) {
-                            Text(
-                                text = when (themeMode) {
-                                    KofuThemeMode.LIGHT -> "☀️"
-                                    KofuThemeMode.DARK -> "🌙"
-                                    KofuThemeMode.SYSTEM -> "⚙️"
-                                },
-                                fontSize = 12.sp
-                            )
-                            Spacer(modifier = Modifier.width(4.dp))
-                            Text(
-                                text = themeMode.label,
-                                color = onSurface,
-                                fontSize = 11.sp,
-                                fontWeight = FontWeight.Medium
-                            )
-                        }
-                    }
+            Text(
+                text = "Tu asistente privado conectado en tiempo real a tu servidor Ollama o motor local ARM64. Sin recopilación de datos.",
+                color = colors.onSurfaceSecondary,
+                fontSize = 12.sp,
+                lineHeight = 16.sp
+            )
 
-                    // Load Model Button (.litertlm / .task / .tflite / .gguf)
-                    IconButton(
-                        onClick = { filePickerLauncher.launch(arrayOf("*/*")) }
+            HorizontalDivider(color = colors.divider.copy(alpha = 0.5f), thickness = 1.dp)
+
+            Text(
+                text = "Consultas de inicio rápido:",
+                color = colors.onSurface,
+                fontSize = 11.sp,
+                fontWeight = FontWeight.SemiBold
+            )
+
+            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                QUICK_PROMPTS.forEach { prompt ->
+                    Surface(
+                        color = colors.surface,
+                        shape = KofuDesignSystem.ButtonShape,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(KofuDesignSystem.ButtonShape)
+                            .border(1.dp, colors.divider, KofuDesignSystem.ButtonShape)
+                            .clickable {
+                                val clean = prompt.substringAfter(" ").trim()
+                                onPromptSelected(clean)
+                            }
                     ) {
-                        Icon(
-                            imageVector = Icons.Default.Add,
-                            contentDescription = "Cargar modelo (.litertlm o .gguf)",
-                            tint = onSurface,
-                            modifier = Modifier.size(24.dp)
+                        Text(
+                            text = prompt,
+                            color = colors.onSurface,
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.Medium,
+                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp)
                         )
-                    }
-
-                    // Overflow Menu
-                    Box {
-                        IconButton(onClick = { showMenu = true }) {
-                            Icon(
-                                imageVector = Icons.Default.MoreVert,
-                                contentDescription = "Menú de opciones",
-                                tint = onSurface
-                            )
-                        }
-
-                        DropdownMenu(
-                            expanded = showMenu,
-                            onDismissRequest = { showMenu = false },
-                            offset = DpOffset(0.dp, 4.dp),
-                            modifier = Modifier.background(surfaceColor)
-                        ) {
-                            DropdownMenuItem(
-                                leadingIcon = {
-                                    Icon(
-                                        imageVector = Icons.Default.Settings,
-                                        contentDescription = null,
-                                        tint = colors.accent
-                                    )
-                                },
-                                text = {
-                                    Column {
-                                        Text(
-                                            text = "Tema de la interfaz",
-                                            color = onSurface,
-                                            fontSize = 14.sp,
-                                            fontWeight = FontWeight.Medium
-                                        )
-                                        Text(
-                                            text = "Actual: ${themeMode.label}",
-                                            color = onSurfaceSecondary,
-                                            fontSize = 11.sp
-                                        )
-                                    }
-                                },
-                                onClick = {
-                                    showMenu = false
-                                    showThemeDialog = true
-                                }
-                            )
-
-                            HorizontalDivider(color = colors.divider)
-
-                            DropdownMenuItem(
-                                leadingIcon = {
-                                    Icon(
-                                        imageVector = Icons.Default.Add,
-                                        contentDescription = null,
-                                        tint = onSurface
-                                    )
-                                },
-                                text = {
-                                    Column {
-                                        Text(
-                                            text = "Cargar modelo local",
-                                            color = onSurface,
-                                            fontSize = 14.sp
-                                        )
-                                        Text(
-                                            text = "LiteRT (.litertlm/.task) o GGUF (.gguf)",
-                                            color = onSurfaceSecondary,
-                                            fontSize = 11.sp
-                                        )
-                                    }
-                                },
-                                onClick = {
-                                    showMenu = false
-                                    filePickerLauncher.launch(arrayOf("*/*"))
-                                }
-                            )
-
-                            DropdownMenuItem(
-                                leadingIcon = {
-                                    Icon(
-                                        imageVector = Icons.Default.Delete,
-                                        contentDescription = null,
-                                        tint = onSurface
-                                    )
-                                },
-                                text = {
-                                    Text(
-                                        text = "Limpiar conversación",
-                                        color = onSurface,
-                                        fontSize = 14.sp
-                                    )
-                                },
-                                onClick = {
-                                    messages.clear()
-                                    messages.add(
-                                        ChatMessage(
-                                            sender = MessageSender.KOFU,
-                                            text = WELCOME_MESSAGE
-                                        )
-                                    )
-                                    showMenu = false
-                                }
-                            )
-
-                            HorizontalDivider(color = colors.divider)
-
-                            DropdownMenuItem(
-                                leadingIcon = {
-                                    Icon(
-                                        imageVector = Icons.Default.Info,
-                                        contentDescription = null,
-                                        tint = onSurface
-                                    )
-                                },
-                                text = {
-                                    Text(
-                                        text = "Estado del Motor / Acerca de Kofu",
-                                        color = onSurface,
-                                        fontSize = 14.sp
-                                    )
-                                },
-                                onClick = {
-                                    showAboutDialog = true
-                                    showMenu = false
-                                }
-                            )
-                        }
                     }
                 }
             }
         }
     }
-
-    // Theme Selection Dialog (Claro / Oscuro / Sistema)
-    if (showThemeDialog) {
-        AlertDialog(
-            onDismissRequest = { showThemeDialog = false },
-            title = {
-                Text(
-                    text = "Apariencia de Kofu",
-                    fontWeight = FontWeight.Bold,
-                    color = onSurface
-                )
-            },
-            text = {
-                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text(
-                        text = "Selecciona el modo visual. Tu preferencia se guardará automáticamente.",
-                        color = onSurfaceSecondary,
-                        fontSize = 13.sp
-                    )
-                    Spacer(modifier = Modifier.height(4.dp))
-                    KofuThemeMode.entries.forEach { mode ->
-                        val isSelected = mode == themeMode
-                        val modeIcon = when (mode) {
-                            KofuThemeMode.LIGHT -> "☀️"
-                            KofuThemeMode.DARK -> "🌙"
-                            KofuThemeMode.SYSTEM -> "⚙️"
-                        }
-                        val modeDesc = when (mode) {
-                            KofuThemeMode.LIGHT -> "Fondo claro perlado de alto contraste"
-                            KofuThemeMode.DARK -> "Fondo obsidiana con acentos lavanda"
-                            KofuThemeMode.SYSTEM -> "Se adapta automáticamente a Android"
-                        }
-
-                        Surface(
-                            color = if (isSelected) colors.accentSoft else colors.surfaceVariant,
-                            shape = RoundedCornerShape(14.dp),
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .clip(RoundedCornerShape(14.dp))
-                                .border(
-                                    width = if (isSelected) 1.5.dp else 1.dp,
-                                    color = if (isSelected) colors.accent else colors.divider,
-                                    shape = RoundedCornerShape(14.dp)
-                                )
-                                .clickable {
-                                    onChangeThemeMode(mode)
-                                    showThemeDialog = false
-                                }
-                        ) {
-                            Row(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .padding(horizontal = 14.dp, vertical = 12.dp),
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.SpaceBetween
-                            ) {
-                                Row(
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    horizontalArrangement = Arrangement.spacedBy(10.dp),
-                                    modifier = Modifier.weight(1f)
-                                ) {
-                                    Text(text = modeIcon, fontSize = 18.sp)
-                                    Column {
-                                        Text(
-                                            text = "Modo ${mode.label}",
-                                            color = onSurface,
-                                            fontWeight = FontWeight.SemiBold,
-                                            fontSize = 14.sp
-                                        )
-                                        Text(
-                                            text = modeDesc,
-                                            color = onSurfaceSecondary,
-                                            fontSize = 11.sp
-                                        )
-                                    }
-                                }
-                                if (isSelected) {
-                                    Icon(
-                                        imageVector = Icons.Default.Check,
-                                        contentDescription = "Seleccionado",
-                                        tint = colors.accent,
-                                        modifier = Modifier.size(20.dp)
-                                    )
-                                }
-                            }
-                        }
-                    }
-                }
-            },
-            confirmButton = {
-                TextButton(onClick = { showThemeDialog = false }) {
-                    Text("Cerrar", color = colors.accent)
-                }
-            },
-            containerColor = surfaceColor
-        )
-    }
-
-    // Model Selector Dialog (Kofu 4.0 Gemma 4 vs Kofu 2.0 Gemma 2)
-    if (showModelDialog) {
-        AlertDialog(
-            onDismissRequest = { showModelDialog = false },
-            title = {
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    Text(text = "🧠", fontSize = 20.sp)
-                    Text(
-                        text = "Seleccionar Modelo Kofu",
-                        fontWeight = FontWeight.Bold,
-                        color = onSurface
-                    )
-                }
-            },
-            text = {
-                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                    Text(
-                        text = "Elige el modelo para ejecutar en local con aceleración nativa ARM64:",
-                        color = onSurfaceSecondary,
-                        fontSize = 13.sp
-                    )
-                    Spacer(modifier = Modifier.height(2.dp))
-
-                    repository.AVAILABLE_MODELS.forEach { modelOpt ->
-                        val isSelected = modelOpt.id == repository.selectedModel.id
-                        val isDownloaded = repository.isModelDownloaded(context, modelOpt)
-                        val isLoaded = isSelected && repository.isModelLoaded
-
-                        val statusText = when {
-                            isLoaded -> "🟢 Activo en memoria"
-                            isDownloaded -> "💾 Descargado (listo)"
-                            else -> "⬇️ Requiere descarga (${modelOpt.sizeLabel})"
-                        }
-
-                        Surface(
-                            color = if (isSelected) colors.accentSoft else colors.surfaceVariant,
-                            shape = RoundedCornerShape(14.dp),
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .clip(RoundedCornerShape(14.dp))
-                                .border(
-                                    width = if (isSelected) 1.5.dp else 1.dp,
-                                    color = if (isSelected) colors.accent else colors.divider,
-                                    shape = RoundedCornerShape(14.dp)
-                                )
-                                .clickable {
-                                    onSelectModel(modelOpt)
-                                    showModelDialog = false
-                                }
-                        ) {
-                            Column(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .padding(horizontal = 14.dp, vertical = 12.dp)
-                            ) {
-                                Row(
-                                    modifier = Modifier.fillMaxWidth(),
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    horizontalArrangement = Arrangement.SpaceBetween
-                                ) {
-                                    Row(
-                                        verticalAlignment = Alignment.CenterVertically,
-                                        horizontalArrangement = Arrangement.spacedBy(6.dp)
-                                    ) {
-                                        Text(
-                                            text = if (modelOpt.isGemma4) "✨" else "⚡",
-                                            fontSize = 14.sp
-                                        )
-                                        Text(
-                                            text = modelOpt.name,
-                                            color = onSurface,
-                                            fontWeight = FontWeight.Bold,
-                                            fontSize = 13.sp
-                                        )
-                                    }
-
-                                    if (modelOpt.isRecommended) {
-                                        Surface(
-                                            color = colors.accent,
-                                            shape = RoundedCornerShape(8.dp)
-                                        ) {
-                                            Text(
-                                                text = "Recomendado",
-                                                color = colors.sendButtonText,
-                                                fontSize = 9.sp,
-                                                fontWeight = FontWeight.Bold,
-                                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
-                                            )
-                                        }
-                                    }
-                                }
-
-                                Spacer(modifier = Modifier.height(4.dp))
-
-                                Text(
-                                    text = modelOpt.description,
-                                    color = onSurfaceSecondary,
-                                    fontSize = 11.sp,
-                                    lineHeight = 14.sp
-                                )
-
-                                Spacer(modifier = Modifier.height(6.dp))
-
-                                Row(
-                                    modifier = Modifier.fillMaxWidth(),
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    horizontalArrangement = Arrangement.SpaceBetween
-                                ) {
-                                    Text(
-                                        text = statusText,
-                                        color = if (isLoaded) colors.accent else onSurfaceSecondary,
-                                        fontSize = 11.sp,
-                                        fontWeight = if (isLoaded) FontWeight.SemiBold else FontWeight.Normal
-                                    )
-
-                                    Text(
-                                        text = modelOpt.sizeLabel,
-                                        color = onSurfaceSecondary,
-                                        fontSize = 11.sp,
-                                        fontWeight = FontWeight.Medium
-                                    )
-                                }
-                            }
-                        }
-                    }
-                }
-            },
-            confirmButton = {
-                TextButton(onClick = { showModelDialog = false }) {
-                    Text("Cerrar", color = colors.accent)
-                }
-            },
-            dismissButton = {
-                TextButton(onClick = {
-                    showModelDialog = false
-                    filePickerLauncher.launch(arrayOf("*/*"))
-                }) {
-                    Text("Cargar otro (+)", color = onSurfaceSecondary)
-                }
-            },
-            containerColor = surfaceColor
-        )
-    }
-
-    // Engine Status & About Dialog
-    if (showAboutDialog) {
-        AlertDialog(
-            onDismissRequest = { showAboutDialog = false },
-            title = {
-                Text(
-                    text = "Kofu Assistant • Motor Dual",
-                    fontWeight = FontWeight.Bold,
-                    color = onSurface,
-                    fontSize = 18.sp
-                )
-            },
-            text = {
-                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                    Text(
-                        text = "Asistente personal inteligente con ejecución 100% local en tu dispositivo.",
-                        color = onSurfaceSecondary,
-                        fontSize = 13.sp
-                    )
-
-                    Surface(
-                        color = colors.surfaceVariant,
-                        shape = RoundedCornerShape(12.dp),
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .border(1.dp, colors.divider, RoundedCornerShape(12.dp))
-                    ) {
-                        Column(
-                            modifier = Modifier.padding(12.dp),
-                            verticalArrangement = Arrangement.spacedBy(6.dp)
-                        ) {
-                            Text(
-                                text = "Diagnóstico del Motor",
-                                fontWeight = FontWeight.Bold,
-                                color = onSurface,
-                                fontSize = 13.sp
-                            )
-                            Text(
-                                text = "• Backend activo: ${activeBackend.displayName}",
-                                color = onSurface,
-                                fontSize = 12.sp
-                            )
-                            Text(
-                                text = "• Modelo cargado: ${if (serverReady) currentModelName else "Ninguno"}",
-                                color = onSurface,
-                                fontSize = 12.sp
-                            )
-                        }
-                    }
-
-                    Text(
-                        text = "Arquitectura Híbrida:\n• Primario: Google AI Edge LiteRT (.litertlm, .task, .tflite) con aceleración GPU/NPU.\n• Fallback: Llama.cpp JNI (.gguf) en CPU.",
-                        color = onSurfaceSecondary,
-                        fontSize = 12.sp,
-                        lineHeight = 17.sp
-                    )
-                }
-            },
-            confirmButton = {
-                TextButton(onClick = { showAboutDialog = false }) {
-                    Text("Entendido", color = colors.accent)
-                }
-            },
-            containerColor = surfaceColor
-        )
-    }
 }
 
+/**
+ * Burbuja de chat moderna con esquinas asimétricas definidas (12dp), bloques de código y botón de copiado.
+ */
 @Composable
-private fun BackendBadge(
-    backend: InferenceBackend,
-    isModelLoaded: Boolean
-) {
-    val colors = LocalKofuColors.current
-
-    val (badgeText, badgeBg, badgeFg) = when {
-        !isModelLoaded || backend == InferenceBackend.NONE -> Triple(
-            "Sin motor",
-            colors.surfaceVariant,
-            colors.onSurfaceSecondary
-        )
-        backend == InferenceBackend.LITERT -> Triple(
-            "⚡ LiteRT",
-            colors.accentSoft,
-            colors.accentSecondary
-        )
-        backend == InferenceBackend.GGUF_FALLBACK -> Triple(
-            "🛡️ GGUF Fallback",
-            colors.surfaceVariant,
-            colors.warningAccent
-        )
-        else -> Triple(
-            backend.displayName,
-            colors.surfaceVariant,
-            colors.onSurfaceSecondary
-        )
-    }
-
-    Surface(
-        color = badgeBg,
-        shape = RoundedCornerShape(50),
-        modifier = Modifier.border(
-            width = 1.dp,
-            color = badgeFg.copy(alpha = 0.45f),
-            shape = RoundedCornerShape(50)
-        )
-    ) {
-        Text(
-            text = badgeText,
-            color = badgeFg,
-            fontSize = 10.sp,
-            fontWeight = FontWeight.SemiBold,
-            modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
-        )
-    }
-}
-
-@Composable
-fun ChatBubble(
+fun ModernChatBubble(
     message: ChatMessage,
     userBubbleColor: Color,
     userBubbleText: Color,
     kofuBubbleColor: Color,
     kofuBubbleBorder: Color,
     kofuTextColor: Color,
-    accentColor: Color
+    accentColor: Color,
+    fontScale: KofuFontScale
 ) {
     val isUser = message.sender == MessageSender.USER
+    val colors = LocalKofuColors.current
+    val clipboard = LocalClipboardManager.current
+    val context = LocalContext.current
 
     Row(
         modifier = Modifier.fillMaxWidth(),
         horizontalArrangement = if (isUser) Arrangement.End else Arrangement.Start
     ) {
         if (isUser) {
-            Box(
+            Surface(
+                color = userBubbleColor,
+                shape = KofuDesignSystem.UserBubbleShape,
                 modifier = Modifier
-                    .widthIn(max = 290.dp)
-                    .clip(
-                        RoundedCornerShape(
-                            topStart = 20.dp,
-                            topEnd = 20.dp,
-                            bottomStart = 20.dp,
-                            bottomEnd = 6.dp
-                        )
-                    )
-                    .background(userBubbleColor)
-                    .padding(horizontal = 14.dp, vertical = 10.dp)
+                    .widthIn(max = 300.dp)
+                    .clip(KofuDesignSystem.UserBubbleShape)
             ) {
-                Column {
+                Column(modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp)) {
                     Text(
                         text = "Tú",
-                        fontWeight = FontWeight.SemiBold,
+                        fontWeight = FontWeight.Bold,
                         fontSize = 11.sp,
-                        color = userBubbleText.copy(alpha = 0.78f)
+                        color = userBubbleText.copy(alpha = 0.8f)
                     )
-                    Spacer(modifier = Modifier.height(3.dp))
-                    FormattedMessageContent(
+                    Spacer(modifier = Modifier.height(4.dp))
+                    Text(
                         text = message.text,
-                        textColor = userBubbleText,
-                        isPending = false,
-                        pulseAlpha = 1.0f
+                        color = userBubbleText,
+                        fontSize = fontScale.bodySp.sp,
+                        lineHeight = (fontScale.bodySp + 5).sp
                     )
                 }
             }
         } else {
-            val infiniteTransition = rememberInfiniteTransition(label = "kofuPending")
+            val infiniteTransition = rememberInfiniteTransition(label = "kofuPulse")
             val pulseAlpha by infiniteTransition.animateFloat(
                 initialValue = 0.45f,
                 targetValue = 1.0f,
                 animationSpec = infiniteRepeatable(
-                    animation = tween(750),
+                    animation = tween(700),
                     repeatMode = RepeatMode.Reverse
                 ),
                 label = "pulseAlpha"
             )
 
-            Box(
+            Surface(
+                color = kofuBubbleColor,
+                shape = KofuDesignSystem.KofuBubbleShape,
                 modifier = Modifier
-                    .widthIn(max = 330.dp)
-                    .clip(
-                        RoundedCornerShape(
-                            topStart = 20.dp,
-                            topEnd = 20.dp,
-                            bottomStart = 6.dp,
-                            bottomEnd = 20.dp
-                        )
-                    )
-                    .background(kofuBubbleColor.copy(alpha = 0.92f))
-                    .border(
-                        width = 1.dp,
-                        color = kofuBubbleBorder,
-                        shape = RoundedCornerShape(
-                            topStart = 20.dp,
-                            topEnd = 20.dp,
-                            bottomStart = 6.dp,
-                            bottomEnd = 20.dp
-                        )
-                    )
-                    .padding(horizontal = 14.dp, vertical = 10.dp)
+                    .widthIn(max = 340.dp)
+                    .clip(KofuDesignSystem.KofuBubbleShape)
+                    .border(1.dp, kofuBubbleBorder, KofuDesignSystem.KofuBubbleShape)
             ) {
-                Column {
+                Column(modifier = Modifier.padding(horizontal = 14.dp, vertical = 12.dp)) {
                     Row(
+                        modifier = Modifier.fillMaxWidth(),
                         verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                        horizontalArrangement = Arrangement.SpaceBetween
                     ) {
-                        Box(
-                            modifier = Modifier
-                                .size(7.dp)
-                                .clip(CircleShape)
-                                .background(accentColor)
-                        )
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
+                            Box(
+                                modifier = Modifier
+                                    .size(7.dp)
+                                    .clip(CircleShape)
+                                    .background(accentColor)
+                            )
+                            Text(
+                                text = "Kofu Assistant",
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 11.sp,
+                                color = accentColor
+                            )
+                        }
+
+                        // Botón de Copiar Mensaje Completo
                         Text(
-                            text = "Kofu v2.0",
-                            fontWeight = FontWeight.Bold,
-                            fontSize = 11.sp,
-                            color = accentColor
+                            text = "Copiar",
+                            color = colors.onSurfaceSecondary,
+                            fontSize = 10.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            modifier = Modifier
+                                .clip(KofuDesignSystem.ButtonShape)
+                                .clickable {
+                                    clipboard.setText(AnnotatedString(message.text))
+                                    Toast.makeText(context, "Respuesta copiada", Toast.LENGTH_SHORT).show()
+                                }
+                                .padding(horizontal = 4.dp, vertical = 2.dp)
                         )
                     }
-                    Spacer(modifier = Modifier.height(4.dp))
+
+                    Spacer(modifier = Modifier.height(6.dp))
+
                     FormattedMessageContent(
                         text = message.text,
                         textColor = kofuTextColor,
                         isPending = message.isPending,
-                        pulseAlpha = pulseAlpha
+                        pulseAlpha = pulseAlpha,
+                        fontScale = fontScale
                     )
                 }
             }
@@ -1273,24 +846,26 @@ fun ChatBubble(
 }
 
 /**
- * Renderizador de texto enriquecido y bloques de código Markdown con botón para copiar.
+ * Renderizador de contenido de mensaje con soporte para bloques de código Markdown con botón de copiado.
  */
 @Composable
 fun FormattedMessageContent(
     text: String,
     textColor: Color,
     isPending: Boolean,
-    pulseAlpha: Float
+    pulseAlpha: Float,
+    fontScale: KofuFontScale
 ) {
     val clipboard = LocalClipboardManager.current
+    val context = LocalContext.current
     val codeBlockRegex = remember { Regex("```([a-zA-Z0-9_-]*)\\n?([\\s\\S]*?)```") }
 
     if (!text.contains("```")) {
         Text(
             text = text,
-            fontSize = 14.sp,
+            fontSize = fontScale.bodySp.sp,
             color = textColor,
-            lineHeight = 20.sp,
+            lineHeight = (fontScale.bodySp + 6).sp,
             fontWeight = if (isPending) FontWeight.Light else FontWeight.Normal,
             modifier = if (isPending) Modifier.alpha(pulseAlpha) else Modifier
         )
@@ -1299,24 +874,27 @@ fun FormattedMessageContent(
 
     val matches = codeBlockRegex.findAll(text).toList()
     var lastIndex = 0
+
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
         for (match in matches) {
             val preText = text.substring(lastIndex, match.range.first).trim()
             if (preText.isNotEmpty()) {
                 Text(
                     text = preText,
-                    fontSize = 14.sp,
+                    fontSize = fontScale.bodySp.sp,
                     color = textColor,
-                    lineHeight = 20.sp
+                    lineHeight = (fontScale.bodySp + 6).sp
                 )
             }
             val lang = match.groupValues[1].ifBlank { "código" }
             val code = match.groupValues[2].trimEnd()
 
             Surface(
-                shape = RoundedCornerShape(8.dp),
-                color = Color(0xFF1E1E2E),
-                modifier = Modifier.fillMaxWidth()
+                shape = KofuDesignSystem.ButtonShape,
+                color = Color(0xFF0F111A),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .border(1.dp, Color(0xFF262C3D), KofuDesignSystem.ButtonShape)
             ) {
                 Column(modifier = Modifier.padding(10.dp)) {
                     Row(
@@ -1331,24 +909,25 @@ fun FormattedMessageContent(
                             fontWeight = FontWeight.Bold
                         )
                         Text(
-                            text = "Copiar",
+                            text = "Copiar Código",
                             color = Color(0xFFA6ADC8),
                             fontSize = 11.sp,
                             fontWeight = FontWeight.SemiBold,
                             modifier = Modifier
-                                .clip(RoundedCornerShape(4.dp))
+                                .clip(KofuDesignSystem.ButtonShape)
                                 .clickable {
                                     clipboard.setText(AnnotatedString(code))
+                                    Toast.makeText(context, "Código copiado", Toast.LENGTH_SHORT).show()
                                 }
                                 .padding(horizontal = 6.dp, vertical = 2.dp)
                         )
                     }
-                    Spacer(modifier = Modifier.height(4.dp))
+                    Spacer(modifier = Modifier.height(6.dp))
                     Text(
                         text = code,
                         color = Color(0xFFCDD6F4),
-                        fontSize = 12.sp,
-                        lineHeight = 16.sp,
+                        fontSize = fontScale.codeSp.sp,
+                        lineHeight = (fontScale.codeSp + 5).sp,
                         fontFamily = FontFamily.Monospace
                     )
                 }
@@ -1360,11 +939,185 @@ fun FormattedMessageContent(
             if (postText.isNotEmpty()) {
                 Text(
                     text = postText,
-                    fontSize = 14.sp,
+                    fontSize = fontScale.bodySp.sp,
                     color = textColor,
-                    lineHeight = 20.sp
+                    lineHeight = (fontScale.bodySp + 6).sp
                 )
             }
         }
     }
+}
+
+/**
+ * Diálogo moderno para selección de modelos (Ollama o GGUF local ARM64).
+ */
+@Composable
+private fun ModelSelectorDialog(
+    repository: LlamaRepository,
+    onDismiss: () -> Unit,
+    onSelectCustomFile: () -> Unit
+) {
+    val colors = LocalKofuColors.current
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                Text(text = "🧠", fontSize = 20.sp)
+                Text(
+                    text = "Seleccionar Modelo",
+                    fontWeight = FontWeight.Bold,
+                    color = colors.onSurface,
+                    fontSize = 18.sp
+                )
+            }
+        },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Text(
+                    text = "Modelos disponibles para ejecución local en CPU/GPU o servidor Ollama:",
+                    color = colors.onSurfaceSecondary,
+                    fontSize = 12.sp
+                )
+
+                // Si hay modelos Ollama disponibles
+                if (repository.ollamaAvailableModels.isNotEmpty()) {
+                    Text(
+                        text = "Modelos en Servidor Ollama (Laptop):",
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = colors.accent
+                    )
+
+                    repository.ollamaAvailableModels.forEach { oModel ->
+                        val isCurrent = repository.ollamaModel == oModel && repository.isModelLoaded
+                        Surface(
+                            color = if (isCurrent) colors.accentSoft else colors.surfaceVariant,
+                            shape = KofuDesignSystem.CardShape,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(KofuDesignSystem.CardShape)
+                                .border(
+                                    1.dp,
+                                    if (isCurrent) colors.accent else colors.divider,
+                                    KofuDesignSystem.CardShape
+                                )
+                                .clickable {
+                                    repository.ollamaModel = oModel
+                                    repository.currentModelName = "$oModel (Ollama)"
+                                    repository.activeBackend = InferenceBackend.OLLAMA_SERVER
+                                    repository.isModelLoaded = true
+                                    onDismiss()
+                                }
+                        ) {
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(10.dp),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Column {
+                                    Text(
+                                        text = oModel,
+                                        fontWeight = FontWeight.Bold,
+                                        fontSize = 13.sp,
+                                        color = colors.onSurface
+                                    )
+                                    Text(
+                                        text = "Inferencia ultrarrápida vía USB / Red",
+                                        fontSize = 11.sp,
+                                        color = colors.onSurfaceSecondary
+                                    )
+                                }
+                                if (isCurrent) {
+                                    Icon(
+                                        imageVector = Icons.Default.Check,
+                                        contentDescription = null,
+                                        tint = colors.accent,
+                                        modifier = Modifier.size(18.dp)
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+
+                Text(
+                    text = "Modelos Nativos ARM64 (HuggingFace / Archivo):",
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = colors.accent
+                )
+
+                repository.AVAILABLE_MODELS.forEach { modelOpt ->
+                    val isSelected = modelOpt.id == repository.selectedModel.id
+                    Surface(
+                        color = if (isSelected) colors.accentSoft else colors.surfaceVariant,
+                        shape = KofuDesignSystem.CardShape,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(KofuDesignSystem.CardShape)
+                            .border(
+                                1.dp,
+                                if (isSelected) colors.accent else colors.divider,
+                                KofuDesignSystem.CardShape
+                            )
+                            .clickable {
+                                repository.selectedModel = modelOpt
+                                onDismiss()
+                            }
+                    ) {
+                        Column(modifier = Modifier.padding(10.dp)) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween
+                            ) {
+                                Text(
+                                    text = modelOpt.name,
+                                    fontWeight = FontWeight.Bold,
+                                    fontSize = 12.sp,
+                                    color = colors.onSurface
+                                )
+                                Text(
+                                    text = modelOpt.sizeLabel,
+                                    fontSize = 11.sp,
+                                    color = colors.onSurfaceSecondary
+                                )
+                            }
+                            Text(
+                                text = modelOpt.description,
+                                fontSize = 11.sp,
+                                color = colors.onSurfaceSecondary,
+                                maxLines = 2,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            Button(
+                onClick = onDismiss,
+                shape = KofuDesignSystem.ButtonShape,
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = colors.accent,
+                    contentColor = colors.sendButtonText
+                )
+            ) {
+                Text("Listo", fontSize = 13.sp)
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onSelectCustomFile) {
+                Text("Cargar archivo (+)", color = colors.onSurfaceSecondary, fontSize = 13.sp)
+            }
+        },
+        containerColor = colors.surface,
+        shape = KofuDesignSystem.DialogShape
+    )
 }

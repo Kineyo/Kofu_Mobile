@@ -1,6 +1,7 @@
 package com.kofu.assistant.repository
 
 import android.content.Context
+import android.content.SharedPreferences
 import android.net.Uri
 import android.provider.OpenableColumns
 import android.util.Log
@@ -21,10 +22,17 @@ import java.io.File
 import java.io.FileOutputStream
 import java.util.concurrent.TimeUnit
 
-enum class InferenceBackend(val displayName: String) {
-    NONE("Sin motor"),
-    LITERT("LiteRT C++ (GPU/NPU)"),
-    GGUF_FALLBACK("GGUF C++ (CPU/JNI ARM64)")
+enum class InferenceBackend(val displayName: String, val badgeLabel: String) {
+    NONE("Sin motor", "OFFLINE"),
+    LITERT("LiteRT C++ (GPU/NPU)", "LiteRT"),
+    GGUF_FALLBACK("GGUF C++ (CPU/JNI ARM64)", "GGUF ARM64"),
+    OLLAMA_SERVER("Servidor Ollama (Laptop)", "OLLAMA")
+}
+
+enum class BackendMode(val displayName: String) {
+    AUTO("Detección Automática (Recomendado)"),
+    OLLAMA("Servidor Ollama (Laptop / Red)"),
+    LOCAL_CPP("Motor Nativo C++ (ARM64 On-Device)")
 }
 
 data class TurnMessage(
@@ -44,24 +52,52 @@ data class ModelOption(
     val isRecommended: Boolean = false
 )
 
+data class DebugMetrics(
+    val tokensGenerated: Int = 0,
+    val tokensPerSec: Double = 0.0,
+    val latencyFirstTokenMs: Long = 0,
+    val totalDurationMs: Long = 0,
+    val memoryRssMb: Long = 0,
+    val activeBackend: String = "Inactivo",
+    val activeModel: String = "Ninguno",
+    val lastRawPrompt: String = "",
+    val lastRawResponse: String = ""
+)
+
 /**
- * Repositorio de alto nivel v2.0 que conecta el motor nativo en C++ (libkofu_engine.so)
- * con la interfaz Jetpack Compose.
- *
- * Características v2.0:
- * - Soporte Multi-Turno con memoria contextual para diálogos continuos.
- * - Importación True Zero-Copy usando FileDescriptor directo (evita duplicar 1.5 GB).
- * - Descargas resilientes con reanudación HTTP (Range: bytes=...).
- * - Notificaciones de estado de benchmarks nativos (t/s, memoria RSS).
+ * Repositorio central de inferencia y configuración de Kofu Assistant.
+ * Gestiona el motor nativo en C++ (libkofu_engine.so), la conexión con servidores Ollama,
+ * los parámetros de generación y el HUD de depuración.
  */
 object LlamaRepository {
     private const val TAG = "LlamaRepository"
+    private const val PREFS_SETTINGS = "kofu_assistant_settings"
 
     var isModelLoaded: Boolean by mutableStateOf(false)
     var currentModelName: String by mutableStateOf("")
     var activeBackend: InferenceBackend by mutableStateOf(InferenceBackend.NONE)
     var lastBenchmarkStats: String by mutableStateOf("")
 
+    // Parámetros de Inferencia Configurables
+    var backendMode: BackendMode by mutableStateOf(BackendMode.AUTO)
+    var ollamaHost: String by mutableStateOf("http://127.0.0.1:11434")
+    var ollamaModel: String by mutableStateOf("kofu:latest")
+    var isOllamaConnected: Boolean by mutableStateOf(false)
+    var ollamaAvailableModels: List<String> by mutableStateOf(emptyList())
+
+    var temperature: Float by mutableStateOf(0.7f)
+    var topP: Float by mutableStateOf(0.9f)
+    var repeatPenalty: Float by mutableStateOf(1.1f)
+    var maxTokens: Int by mutableStateOf(2048)
+    var systemPrompt: String by mutableStateOf(
+        "Eres Kofu, un asistente de IA local útil, atento, privado y respetuoso. Responde de forma clara, precisa y concisa en español."
+    )
+
+    // Modo de Depuración
+    var isDebugMode: Boolean by mutableStateOf(true)
+    var debugMetrics: DebugMetrics by mutableStateOf(DebugMetrics())
+
+    val ollamaClient: OllamaClient = OllamaClient(ollamaHost)
     private val supportedExtensions = listOf(".litertlm", ".task", ".tflite", ".bin", ".gguf")
 
     // Modelos Oficiales Kofu Edge
@@ -92,14 +128,6 @@ object LlamaRepository {
 
     var selectedModel: ModelOption by mutableStateOf(AVAILABLE_MODELS.first())
 
-    // Constantes de compatibilidad
-    const val DEFAULT_KOFU_V2_GGUF_FILENAME = "kofu-v2-edge-q4_k_m.gguf"
-    const val DEFAULT_KOFU_V2_GGUF_URL =
-        "https://huggingface.co/shebxyd/kofu-v2-edge/resolve/main/kofu-v2-edge-q4_k_m.gguf"
-    const val FALLBACK_KOFU_V1_FILENAME = "kofu-gemma-2b-edge-q4_k_m.gguf"
-    const val FALLBACK_KOFU_V1_URL =
-        "https://huggingface.co/shebxyd/kofu-2b-edge/resolve/main/kofu-gemma-2b-edge-q4_k_m.gguf"
-
     init {
         if (KofuNativeEngine.isNativeReady()) {
             KofuNativeEngine.nativeInit()
@@ -110,9 +138,85 @@ object LlamaRepository {
     }
 
     /**
+     * Carga y sincroniza las preferencias persistentes del usuario.
+     */
+    fun loadPreferences(context: Context) {
+        val prefs = context.getSharedPreferences(PREFS_SETTINGS, Context.MODE_PRIVATE)
+        ollamaHost = prefs.getString("ollama_host", "http://127.0.0.1:11434") ?: "http://127.0.0.1:11434"
+        ollamaModel = prefs.getString("ollama_model", "kofu:latest") ?: "kofu:latest"
+        val savedMode = prefs.getString("backend_mode", BackendMode.AUTO.name)
+        backendMode = runCatching { BackendMode.valueOf(savedMode ?: BackendMode.AUTO.name) }.getOrDefault(BackendMode.AUTO)
+        temperature = prefs.getFloat("temperature", 0.7f)
+        topP = prefs.getFloat("top_p", 0.9f)
+        repeatPenalty = prefs.getFloat("repeat_penalty", 1.1f)
+        maxTokens = prefs.getInt("max_tokens", 2048)
+        systemPrompt = prefs.getString("system_prompt", systemPrompt) ?: systemPrompt
+        isDebugMode = prefs.getBoolean("debug_mode", true)
+
+        ollamaClient.updateBaseUrl(ollamaHost)
+    }
+
+    fun savePreferences(context: Context) {
+        val prefs = context.getSharedPreferences(PREFS_SETTINGS, Context.MODE_PRIVATE)
+        prefs.edit().apply {
+            putString("ollama_host", ollamaHost)
+            putString("ollama_model", ollamaModel)
+            putString("backend_mode", backendMode.name)
+            putFloat("temperature", temperature)
+            putFloat("top_p", topP)
+            putFloat("repeat_penalty", repeatPenalty)
+            putInt("max_tokens", maxTokens)
+            putString("system_prompt", systemPrompt)
+            putBoolean("debug_mode", isDebugMode)
+            apply()
+        }
+        ollamaClient.updateBaseUrl(ollamaHost)
+    }
+
+    /**
+     * Comprueba la conectividad con el servidor Ollama en la laptop o red local.
+     */
+    fun probeOllama(scope: CoroutineScope, onFinished: (Boolean) -> Unit = {}) {
+        scope.launch(Dispatchers.IO) {
+            val res = ollamaClient.checkHealthAndFetchModels()
+            withContext(Dispatchers.Main) {
+                if (res.isSuccess) {
+                    val models = res.getOrNull() ?: emptyList()
+                    val names = models.map { it.name }
+                    isOllamaConnected = true
+                    ollamaAvailableModels = names
+
+                    // Si kofu:latest existe en el servidor, seleccionarlo preferentemente
+                    if (names.any { it.contains("kofu") }) {
+                        ollamaModel = names.first { it.contains("kofu") }
+                    } else if (names.isNotEmpty() && !names.contains(ollamaModel)) {
+                        ollamaModel = names.first()
+                    }
+
+                    if (backendMode == BackendMode.AUTO || backendMode == BackendMode.OLLAMA) {
+                        activeBackend = InferenceBackend.OLLAMA_SERVER
+                        isModelLoaded = true
+                        currentModelName = "$ollamaModel (Ollama)"
+                        debugMetrics = debugMetrics.copy(
+                            activeBackend = "Servidor Ollama",
+                            activeModel = ollamaModel
+                        )
+                    }
+                    onFinished(true)
+                } else {
+                    isOllamaConnected = false
+                    if (backendMode == BackendMode.OLLAMA) {
+                        isModelLoaded = false
+                        activeBackend = InferenceBackend.NONE
+                    }
+                    onFinished(false)
+                }
+            }
+        }
+    }
+
+    /**
      * Carga un modelo en el backend C++.
-     * Si la URI proviene de SAF (content://), se obtiene el FileDescriptor directamente
-     * para realizar mmap inmediato sin copiar el archivo a disco (True Zero-Copy).
      */
     fun loadModel(
         context: Context,
@@ -164,12 +268,22 @@ object LlamaRepository {
                         else -> InferenceBackend.GGUF_FALLBACK
                     }
                     lastBenchmarkStats = KofuNativeEngine.nativeGetStatsJson()
+                    debugMetrics = debugMetrics.copy(
+                        activeBackend = activeBackend.displayName,
+                        activeModel = currentModelName
+                    )
                     Log.i(TAG, "Modelo cargado en C++: $currentModelName | Backend: ${activeBackend.displayName}")
                 } else {
-                    isModelLoaded = false
-                    activeBackend = InferenceBackend.NONE
-                    currentModelName = "Error: Fallo al cargar en el motor C++"
-                    Log.e(TAG, "Fallo nativo cargando $fileName")
+                    // Si falla la carga local y Ollama está disponible, redirigir limpiamente
+                    if (isOllamaConnected) {
+                        activeBackend = InferenceBackend.OLLAMA_SERVER
+                        isModelLoaded = true
+                        currentModelName = "$ollamaModel (Ollama)"
+                    } else {
+                        isModelLoaded = false
+                        activeBackend = InferenceBackend.NONE
+                        currentModelName = "Error: Fallo al cargar en el motor C++"
+                    }
                 }
             }
         }
@@ -214,35 +328,110 @@ object LlamaRepository {
     }
 
     /**
-     * Generación de texto multi-turno con historial conversacional continuo.
+     * Generación de texto multi-turno adaptativa:
+     * Si el servidor Ollama está activo, genera por streaming HTTP en tiempo real.
+     * Si no, utiliza el motor C++ nativo ARM64.
      */
     fun generateChatStream(history: List<TurnMessage>): Flow<String> = callbackFlow {
+        val shouldUseOllama = when (backendMode) {
+            BackendMode.OLLAMA -> true
+            BackendMode.LOCAL_CPP -> false
+            BackendMode.AUTO -> activeBackend == InferenceBackend.OLLAMA_SERVER || (!KofuNativeEngine.nativeIsModelLoaded() && isOllamaConnected)
+        }
+
+        val fullPromptRepresentation = history.joinToString("\n") { "[${it.role.uppercase()}]: ${it.content}" }
+        val startTime = System.currentTimeMillis()
+
+        if (shouldUseOllama) {
+            var firstTokenReceived = false
+            var ttftLatency = 0L
+            val accumulated = StringBuilder()
+
+            ollamaClient.chatStream(
+                history = history,
+                modelName = ollamaModel,
+                systemPrompt = systemPrompt,
+                temperature = temperature,
+                topP = topP,
+                repeatPenalty = repeatPenalty,
+                maxTokens = maxTokens,
+                onFirstTokenLatency = { ttft ->
+                    ttftLatency = ttft
+                    firstTokenReceived = true
+                }
+            ).collect { chunk ->
+                if (chunk.content.isNotEmpty()) {
+                    accumulated.append(chunk.content)
+                    trySend(chunk.content)
+                }
+
+                if (chunk.isDone) {
+                    val totalDurationMs = System.currentTimeMillis() - startTime
+                    val evalSec = if (chunk.evalDurationNs > 0) chunk.evalDurationNs / 1_000_000_000.0 else (totalDurationMs / 1000.0)
+                    val tps = if (evalSec > 0.0 && chunk.evalCount > 0) chunk.evalCount / evalSec else 0.0
+
+                    debugMetrics = DebugMetrics(
+                        tokensGenerated = chunk.evalCount,
+                        tokensPerSec = tps,
+                        latencyFirstTokenMs = ttftLatency,
+                        totalDurationMs = totalDurationMs,
+                        memoryRssMb = 0L,
+                        activeBackend = "Servidor Ollama (${ollamaClient.getBaseUrl()})",
+                        activeModel = ollamaModel,
+                        lastRawPrompt = fullPromptRepresentation,
+                        lastRawResponse = accumulated.toString()
+                    )
+                }
+            }
+            close()
+            return@callbackFlow
+        }
+
+        // Ejecución C++ Nativa
         if (!KofuNativeEngine.nativeIsModelLoaded()) {
-            trySend("Error [C++ Backend]: Ningún modelo cargado. Selecciona un archivo o descarga el predeterminado.")
+            trySend("Error [Kofu Engine]: No hay un modelo cargado en memoria local ni servidor Ollama conectado. Abre Ajustes para conectar a la laptop o cargar un modelo.")
             close()
             return@callbackFlow
         }
 
         val roles = history.map { it.role }.toTypedArray()
         val messages = history.map { it.content }.toTypedArray()
+        val responseAcc = StringBuilder()
+        var tokenCount = 0
+        var firstTokenTime = 0L
 
         KofuNativeEngine.nativeGenerateStreamHistory(roles, messages) { token ->
+            if (tokenCount == 0) {
+                firstTokenTime = System.currentTimeMillis() - startTime
+            }
+            tokenCount++
+            responseAcc.append(token)
             trySend(token)
         }
 
+        val totalTime = System.currentTimeMillis() - startTime
+        val seconds = totalTime / 1000.0
+        val tps = if (seconds > 0) tokenCount / seconds else 0.0
+
         lastBenchmarkStats = KofuNativeEngine.nativeGetStatsJson()
+        debugMetrics = DebugMetrics(
+            tokensGenerated = tokenCount,
+            tokensPerSec = tps,
+            latencyFirstTokenMs = firstTokenTime,
+            totalDurationMs = totalTime,
+            memoryRssMb = 0L,
+            activeBackend = activeBackend.displayName,
+            activeModel = currentModelName,
+            lastRawPrompt = fullPromptRepresentation,
+            lastRawResponse = responseAcc.toString()
+        )
+
         close()
 
         awaitClose {
             KofuNativeEngine.nativeCancelGeneration()
         }
     }.flowOn(Dispatchers.IO)
-
-    /**
-     * Generación simple de un solo turno (compatibilidad)
-     */
-    fun generateResponseStream(prompt: String): Flow<String> =
-        generateChatStream(listOf(TurnMessage("user", prompt)))
 
     fun cancelGeneration() {
         KofuNativeEngine.nativeCancelGeneration()
@@ -314,9 +503,6 @@ object LlamaRepository {
         }
     }
 
-    /**
-     * Descarga del modelo seleccionado actualmente.
-     */
     fun downloadDefaultModel(
         context: Context,
         onProgress: (Float) -> Unit,
@@ -346,7 +532,7 @@ object LlamaRepository {
             }
         }
 
-        // 3. Descargar el modelo seleccionado (por defecto Gemma 4)
+        // 3. Descargar el modelo seleccionado
         downloadModel(context, selectedModel, onProgress, onComplete, onError)
     }
 
@@ -372,7 +558,7 @@ object LlamaRepository {
                 val code = response.code
                 val isResume = (code == 206)
                 if (code != 200 && code != 206) {
-                    if (code == 416) { // Range not satisfiable -> archivo ya completo
+                    if (code == 416) {
                         return true
                     }
                     return false
