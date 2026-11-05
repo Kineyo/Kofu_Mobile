@@ -1,0 +1,8 @@
+Gemma Terms of Use
+
+By using, reproducing, modifying, distributing, performing or displaying any portion or element of the Model, the Model Derivatives, or any output of the Model, you agree to be bound by the Gemma Terms of Use.
+
+You may access and use Gemma for lawful purposes, subject to the Google Prohibited Use Policy (https://policies.google.com/terms/generative-ai/use-policy).
+
+Full terms and license conditions available at:
+https://ai.google.dev/gemma/terms
