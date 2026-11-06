@@ -43,6 +43,15 @@ find_library(
     android
 )
 
+target_compile_options(
+    kofu_engine
+    PRIVATE
+    -fstack-protector-strong
+    -D_FORTIFY_SOURCE=2
+    -Wformat
+    -Wformat-security
+)
+
 target_link_libraries(
     kofu_engine
     PRIVATE

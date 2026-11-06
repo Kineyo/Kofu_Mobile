@@ -112,8 +112,17 @@ object AppUpdateManager {
     }
 
     fun openDownload(context: Context, downloadUrl: String) {
+        val uri = Uri.parse(downloadUrl)
+        val scheme = uri.scheme?.lowercase()
+        val host = uri.host?.lowercase()
+
+        if (scheme != "https" || host == null || (!host.endsWith("github.com") && !host.endsWith("githubusercontent.com"))) {
+            Log.e(TAG, "Rechazada URL no confiable o no segura para actualización: $downloadUrl")
+            return
+        }
+
         try {
-            val intent = Intent(Intent.ACTION_VIEW, Uri.parse(downloadUrl)).apply {
+            val intent = Intent(Intent.ACTION_VIEW, uri).apply {
                 addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
             }
             context.startActivity(intent)

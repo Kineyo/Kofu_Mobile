@@ -170,6 +170,17 @@ class ModelDownloadService : Service() {
     private fun startDownloadProcess(url: String, fileName: String, modelName: String) {
         downloadJob?.cancel()
 
+        if (!url.startsWith("https://", ignoreCase = true)) {
+            notifyError("Solo se permiten descargas cifradas (HTTPS)")
+            return
+        }
+
+        val safeFileName = File(fileName).name.replace(Regex("[^a-zA-Z0-9._-]"), "_")
+        if (!safeFileName.endsWith(".gguf", ignoreCase = true) && !safeFileName.endsWith(".litertlm", ignoreCase = true)) {
+            notifyError("Tipo de archivo de modelo no permitido")
+            return
+        }
+
         LlamaRepository.isDownloadingModel = true
         LlamaRepository.downloadProgress = 0f
         LlamaRepository.downloadStatusText = "Conectando con Hugging Face..."
@@ -180,7 +191,11 @@ class ModelDownloadService : Service() {
             return
         }
 
-        val targetFile = File(externalDir, fileName)
+        val targetFile = File(externalDir, safeFileName)
+        if (!targetFile.canonicalPath.startsWith(externalDir.canonicalPath)) {
+            notifyError("Ruta de archivo no permitida (Path Traversal)")
+            return
+        }
 
         downloadJob = serviceScope.launch {
             val client = OkHttpClient.Builder()

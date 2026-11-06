@@ -259,12 +259,13 @@ object LlamaRepository {
 
             if (modelUri.scheme == "content") {
                 try {
-                    val pfd = context.contentResolver.openFileDescriptor(modelUri, "r")
-                    if (pfd != null) {
-                        val fd = pfd.detachFd()
+                    context.contentResolver.openFileDescriptor(modelUri, "r")?.use { pfd ->
                         val size = pfd.statSize
+                        val fd = pfd.detachFd()
                         loaded = KofuNativeEngine.nativeLoadModelFd(fd, size, fileName)
-                        pfd.close()
+                        if (!loaded) {
+                            runCatching { android.os.ParcelFileDescriptor.adoptFd(fd).close() }
+                        }
                     }
                 } catch (e: Exception) {
                     Log.w(TAG, "Fallo al mapear FD directo, intentando ruta alternativa...", e)
@@ -314,7 +315,12 @@ object LlamaRepository {
             return uri.path
         }
         return try {
-            val cacheFile = File(context.cacheDir, "kofu_active_model_$fileName")
+            val safeFileName = File(fileName).name.replace(Regex("[^a-zA-Z0-9._-]"), "_")
+            val cacheFile = File(context.cacheDir, "kofu_active_model_$safeFileName")
+            if (!cacheFile.canonicalPath.startsWith(context.cacheDir.canonicalPath)) {
+                Log.e(TAG, "Ruta no permitida (Path Traversal)")
+                return null
+            }
             if (!cacheFile.exists() || cacheFile.length() < 1024L) {
                 context.contentResolver.openInputStream(uri)?.use { input ->
                     FileOutputStream(cacheFile).use { output ->

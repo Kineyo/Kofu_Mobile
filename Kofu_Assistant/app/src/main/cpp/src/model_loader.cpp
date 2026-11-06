@@ -129,11 +129,17 @@ bool ModelLoader::check_gguf_magic(const uint8_t* data, size_t size, ModelMetada
     if (data[0] == 'G' && data[1] == 'G' && data[2] == 'U' && data[3] == 'F') {
         out.format = ModelFormat::GGUF;
         out.is_valid = true;
-        // Version uint32
-        out.version = *reinterpret_cast<const uint32_t*>(data + 4);
+        // Version uint32 (lectura segura con memcpy para evitar fallos de alineación en ARM)
+        uint32_t version = 0;
+        std::memcpy(&version, data + 4, sizeof(version));
+        out.version = version;
         if (size >= 24) {
-            out.tensor_count = *reinterpret_cast<const uint64_t*>(data + 8);
-            out.kv_count = *reinterpret_cast<const uint64_t*>(data + 16);
+            uint64_t tensor_cnt = 0;
+            uint64_t kv_cnt = 0;
+            std::memcpy(&tensor_cnt, data + 8, sizeof(tensor_cnt));
+            std::memcpy(&kv_cnt, data + 16, sizeof(kv_cnt));
+            out.tensor_count = tensor_cnt;
+            out.kv_count = kv_cnt;
         }
         LOGI("Cabecera GGUF detectada: versión %u, tensores %lu, kv %lu",
              out.version, (unsigned long)out.tensor_count, (unsigned long)out.kv_count);

@@ -333,8 +333,12 @@ void KofuEngine::generate_stream_history(
 
     // 5. Procesar los tokens de entrada por lotes
     llama_batch batch = llama_batch_init(512, 0, 1);
+    bool prompt_interrupted = false;
     for (size_t i = 0; i < tokens_list.size(); i += 512) {
-        if (is_cancelled_.load()) break;
+        if (is_cancelled_.load()) {
+            prompt_interrupted = true;
+            break;
+        }
 
         int32_t n_eval = static_cast<int32_t>(std::min(static_cast<size_t>(512), tokens_list.size() - i));
         for (int32_t j = 0; j < n_eval; ++j) {
@@ -354,6 +358,14 @@ void KofuEngine::generate_stream_history(
             is_generating_.store(false);
             return;
         }
+    }
+
+    if (prompt_interrupted || is_cancelled_.load()) {
+        token_callback("\n[Generación cancelada]");
+        llama_batch_free(batch);
+        llama_sampler_free(smpl);
+        is_generating_.store(false);
+        return;
     }
 
     // 6. Bucle de generación autoregresiva con emisor seguro UTF-8
@@ -396,9 +408,17 @@ void KofuEngine::generate_stream_history(
             break;
         }
 
-        // Convertir token a texto (piece)
+        // Convertir token a texto (piece) con manejo seguro contra desbordamiento de búfer
         int32_t n_piece = llama_token_to_piece(vocab, new_token_id, piece_buf, sizeof(piece_buf), 0, false);
-        if (n_piece > 0) {
+        if (n_piece < 0) {
+            std::vector<char> dynamic_buf(-n_piece);
+            n_piece = llama_token_to_piece(vocab, new_token_id, dynamic_buf.data(), static_cast<int32_t>(dynamic_buf.size()), 0, false);
+            if (n_piece > 0) {
+                std::string piece_str(dynamic_buf.data(), n_piece);
+                emit_utf8_safe(piece_str, false);
+                token_count++;
+            }
+        } else if (n_piece > 0) {
             std::string piece_str(piece_buf, n_piece);
             emit_utf8_safe(piece_str, false);
             token_count++;

@@ -118,6 +118,7 @@ Java_com_kofu_assistant_repository_KofuNativeEngine_nativeGenerateStream(
 
     if (on_token_method == nullptr) {
         LOGE("No se encontró el método onToken(String) en el callback");
+        env->DeleteLocalRef(callback_class);
         return;
     }
 
@@ -132,6 +133,7 @@ Java_com_kofu_assistant_repository_KofuNativeEngine_nativeGenerateStream(
     };
 
     kofu::KofuEngine::instance().generate_stream(prompt, token_emitter);
+    env->DeleteLocalRef(callback_class);
 }
 
 JNIEXPORT void JNICALL
@@ -144,7 +146,9 @@ Java_com_kofu_assistant_repository_KofuNativeEngine_nativeGenerateStreamHistory(
 ) {
     if (j_roles == nullptr || j_messages == nullptr || j_callback == nullptr) return;
 
-    jsize count = env->GetArrayLength(j_roles);
+    jsize count_roles = env->GetArrayLength(j_roles);
+    jsize count_messages = env->GetArrayLength(j_messages);
+    jsize count = std::min(count_roles, count_messages);
     std::vector<kofu::ChatTurn> history;
     history.reserve(count);
 
@@ -152,20 +156,36 @@ Java_com_kofu_assistant_repository_KofuNativeEngine_nativeGenerateStreamHistory(
         auto j_role = static_cast<jstring>(env->GetObjectArrayElement(j_roles, i));
         auto j_msg = static_cast<jstring>(env->GetObjectArrayElement(j_messages, i));
 
-        const char* r_chars = env->GetStringUTFChars(j_role, nullptr);
-        const char* m_chars = env->GetStringUTFChars(j_msg, nullptr);
+        std::string role_str = "user";
+        std::string msg_str = "";
 
-        history.push_back({std::string(r_chars), std::string(m_chars)});
+        if (j_role != nullptr) {
+            const char* r_chars = env->GetStringUTFChars(j_role, nullptr);
+            if (r_chars != nullptr) {
+                role_str = r_chars;
+                env->ReleaseStringUTFChars(j_role, r_chars);
+            }
+            env->DeleteLocalRef(j_role);
+        }
 
-        env->ReleaseStringUTFChars(j_role, r_chars);
-        env->ReleaseStringUTFChars(j_msg, m_chars);
-        env->DeleteLocalRef(j_role);
-        env->DeleteLocalRef(j_msg);
+        if (j_msg != nullptr) {
+            const char* m_chars = env->GetStringUTFChars(j_msg, nullptr);
+            if (m_chars != nullptr) {
+                msg_str = m_chars;
+                env->ReleaseStringUTFChars(j_msg, m_chars);
+            }
+            env->DeleteLocalRef(j_msg);
+        }
+
+        history.push_back({role_str, msg_str});
     }
 
     jclass callback_class = env->GetObjectClass(j_callback);
     jmethodID on_token_method = env->GetMethodID(callback_class, "onToken", "(Ljava/lang/String;)V");
-    if (!on_token_method) return;
+    if (!on_token_method) {
+        env->DeleteLocalRef(callback_class);
+        return;
+    }
 
     // Dado que se ejecuta en el mismo hilo de Dispatchers.IO, reutilizamos env directamente
     // evitando el costoso Attach/Detach en cada token individual.
@@ -180,6 +200,7 @@ Java_com_kofu_assistant_repository_KofuNativeEngine_nativeGenerateStreamHistory(
     };
 
     kofu::KofuEngine::instance().generate_stream_history(history, token_emitter);
+    env->DeleteLocalRef(callback_class);
 }
 
 JNIEXPORT void JNICALL
