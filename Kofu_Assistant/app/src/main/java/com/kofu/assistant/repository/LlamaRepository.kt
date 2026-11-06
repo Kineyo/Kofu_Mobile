@@ -19,6 +19,8 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
 import okhttp3.Request
+import org.json.JSONObject
+import kotlinx.coroutines.isActive
 import java.io.File
 import java.io.FileOutputStream
 import java.util.concurrent.TimeUnit
@@ -350,7 +352,6 @@ object LlamaRepository {
         val startTime = System.currentTimeMillis()
 
         if (shouldUseOllama) {
-            var firstTokenReceived = false
             var ttftLatency = 0L
             val accumulated = StringBuilder()
 
@@ -364,7 +365,6 @@ object LlamaRepository {
                 maxTokens = maxTokens,
                 onFirstTokenLatency = { ttft ->
                     ttftLatency = ttft
-                    firstTokenReceived = true
                 }
             ).collect { chunk ->
                 if (chunk.content.isNotEmpty()) {
@@ -407,26 +407,44 @@ object LlamaRepository {
         var tokenCount = 0
         var firstTokenTime = 0L
 
-        KofuNativeEngine.nativeGenerateStreamHistory(roles, messages) { token ->
-            if (tokenCount == 0) {
-                firstTokenTime = System.currentTimeMillis() - startTime
+        try {
+            KofuNativeEngine.nativeGenerateStreamHistory(roles, messages) { token ->
+                if (!coroutineContext.isActive) return@nativeGenerateStreamHistory
+                if (tokenCount == 0) {
+                    firstTokenTime = System.currentTimeMillis() - startTime
+                }
+                tokenCount++
+                responseAcc.append(token)
+                trySend(token)
             }
-            tokenCount++
-            responseAcc.append(token)
-            trySend(token)
+        } finally {
+            if (!coroutineContext.isActive) {
+                KofuNativeEngine.nativeCancelGeneration()
+            }
         }
 
         val totalTime = System.currentTimeMillis() - startTime
         val seconds = totalTime / 1000.0
-        val tps = if (seconds > 0) tokenCount / seconds else 0.0
+        var tps = if (seconds > 0) tokenCount / seconds else 0.0
 
-        lastBenchmarkStats = KofuNativeEngine.nativeGetStatsJson()
+        val statsJson = KofuNativeEngine.nativeGetStatsJson()
+        var nativeRssMb = 0L
+        try {
+            val json = JSONObject(statsJson)
+            nativeRssMb = json.optLong("memory_rss_mb", 0L)
+            val parsedTps = json.optDouble("tokens_per_sec", 0.0)
+            if (parsedTps > 0.0) tps = parsedTps
+        } catch (e: Exception) {
+            Log.w(TAG, "No se pudo parsear statsJson nativo", e)
+        }
+
+        lastBenchmarkStats = statsJson
         debugMetrics = DebugMetrics(
             tokensGenerated = tokenCount,
             tokensPerSec = tps,
             latencyFirstTokenMs = firstTokenTime,
             totalDurationMs = totalTime,
-            memoryRssMb = 0L,
+            memoryRssMb = nativeRssMb,
             activeBackend = activeBackend.displayName,
             activeModel = currentModelName,
             lastRawPrompt = fullPromptRepresentation,
@@ -486,6 +504,7 @@ object LlamaRepository {
 
         val localFile = File(externalDir, modelOption.fileName)
         if (localFile.exists() && localFile.length() > 50L * 1024L * 1024L) {
+            onProgress(1f)
             onComplete(Uri.fromFile(localFile))
             loadModel(context, Uri.fromFile(localFile), CoroutineScope(Dispatchers.Main))
             return
@@ -546,8 +565,6 @@ object LlamaRepository {
      * mediante Foreground Service persistente si no existe un modelo local cargado previamente.
      */
     fun startAutoDownloadIfNeeded(context: Context, scope: CoroutineScope) {
-        val externalDir = context.getExternalFilesDir(null) ?: return
-
         // 1. Si ya hay un modelo cargado en el motor C++, no hacer nada
         if (KofuNativeEngine.nativeIsModelLoaded()) {
             return

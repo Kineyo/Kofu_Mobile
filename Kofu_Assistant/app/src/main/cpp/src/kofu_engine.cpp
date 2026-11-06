@@ -87,8 +87,16 @@ bool KofuEngine::load_model(const std::string& filepath) {
     llama_context_params cparams = llama_context_default_params();
     cparams.n_ctx = 2048;
     cparams.n_batch = 512;
-    cparams.n_threads = 4;
-    cparams.n_threads_batch = 4;
+
+    // Detectar número óptimo de hilos de CPU (en teléfonos, los núcleos de rendimiento suelen ser 4)
+    unsigned int hardware_threads = std::thread::hardware_concurrency();
+    int32_t optimal_threads = 4;
+    if (hardware_threads > 0) {
+        optimal_threads = static_cast<int32_t>(std::min(4u, std::max(2u, hardware_threads / 2)));
+        if (hardware_threads >= 6) optimal_threads = 4;
+    }
+    cparams.n_threads = optimal_threads;
+    cparams.n_threads_batch = optimal_threads;
 
     lctx_ = llama_init_from_model(lmodel_, cparams);
     if (!lctx_) {
@@ -137,8 +145,15 @@ bool KofuEngine::load_model_fd(int fd, size_t size, const std::string& name) {
     llama_context_params cparams = llama_context_default_params();
     cparams.n_ctx = 2048;
     cparams.n_batch = 512;
-    cparams.n_threads = 4;
-    cparams.n_threads_batch = 4;
+
+    unsigned int hardware_threads = std::thread::hardware_concurrency();
+    int32_t optimal_threads = 4;
+    if (hardware_threads > 0) {
+        optimal_threads = static_cast<int32_t>(std::min(4u, std::max(2u, hardware_threads / 2)));
+        if (hardware_threads >= 6) optimal_threads = 4;
+    }
+    cparams.n_threads = optimal_threads;
+    cparams.n_threads_batch = optimal_threads;
 
     lctx_ = llama_init_from_model(lmodel_, cparams);
     if (!lctx_) {
