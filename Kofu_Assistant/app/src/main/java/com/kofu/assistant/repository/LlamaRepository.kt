@@ -112,25 +112,36 @@ object LlamaRepository {
     // Modelos Oficiales Kofu Edge
     val AVAILABLE_MODELS = listOf(
         ModelOption(
+            id = "kofu-v2",
+            name = "Kofu 2.0 Edge (Gemma 2 2B)",
+            shortName = "Kofu 2.0",
+            description = "Modelo predeterminado optimizado para teléfonos móviles ARM64. Rápido, preciso y equilibrado en español.",
+            fileName = "kofu-v2-edge-q4_k_m.gguf",
+            downloadUrl = "https://huggingface.co/shebxyd/kofu-v2-edge/resolve/main/kofu-v2-edge-q4_k_m.gguf",
+            sizeLabel = "~1.6 GB",
+            isGemma4 = false,
+            isRecommended = true
+        ),
+        ModelOption(
+            id = "kofu-2b",
+            name = "Kofu 1.0 Lite (Gemma 2B)",
+            shortName = "Gemma 1 Lite",
+            description = "Modelo ultraligero de baja huella de memoria para dispositivos con recursos reducidos.",
+            fileName = "kofu-gemma-2b-edge-q4_k_m.gguf",
+            downloadUrl = "https://huggingface.co/shebxyd/kofu-2b-edge/resolve/main/kofu-gemma-2b-edge-q4_k_m.gguf",
+            sizeLabel = "~1.4 GB",
+            isGemma4 = false,
+            isRecommended = false
+        ),
+        ModelOption(
             id = "kofu-gemma4",
-            name = "Kofu 4.0 Edge (Gemma 4 E4B)",
-            shortName = "Gemma 4",
-            description = "Última arquitectura Gemma con alta capacidad de razonamiento lógico, código y ciberseguridad.",
+            name = "Kofu 4.0 Pro (Gemma 4 E4B)",
+            shortName = "Gemma 4 Pro",
+            description = "Modelo insignia con máxima capacidad de razonamiento lógico. Requiere teléfono de gama alta (12GB+ RAM).",
             fileName = "kofu-gemma4-edge-q4_k_m.gguf",
             downloadUrl = "https://huggingface.co/shebxyd/kofu-gemma4-edge/resolve/main/kofu-gemma4-edge-q4_k_m.gguf",
             sizeLabel = "~5.3 GB",
             isGemma4 = true,
-            isRecommended = true
-        ),
-        ModelOption(
-            id = "kofu-v2",
-            name = "Kofu 2.0 Edge (Gemma 2 2B)",
-            shortName = "Gemma 2",
-            description = "Modelo ultraligero y de respuesta inmediata basado en Gemma 2 2B.",
-            fileName = "kofu-v2-edge-q4_k_m.gguf",
-            downloadUrl = "https://huggingface.co/shebxyd/kofu-v2-edge/resolve/main/kofu-v2-edge-q4_k_m.gguf",
-            sizeLabel = "~1.7 GB",
-            isGemma4 = false,
             isRecommended = false
         )
     )
@@ -401,8 +412,17 @@ object LlamaRepository {
             return@callbackFlow
         }
 
-        val roles = history.map { it.role }.toTypedArray()
-        val messages = history.map { it.content }.toTypedArray()
+        // Preservar system prompt y limitar historial reciente a máximo 14 turnos para respetar los 2048 tokens
+        val boundedHistory = if (history.size > 14) {
+            val sysTurns = history.filter { it.role == "system" }
+            val recentTurns = history.filter { it.role != "system" }.takeLast(12)
+            sysTurns + recentTurns
+        } else {
+            history
+        }
+
+        val roles = boundedHistory.map { it.role }.toTypedArray()
+        val messages = boundedHistory.map { it.content }.toTypedArray()
         val responseAcc = StringBuilder()
         var tokenCount = 0
         var firstTokenTime = 0L

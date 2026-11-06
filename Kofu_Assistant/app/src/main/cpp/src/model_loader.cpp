@@ -24,51 +24,46 @@ ModelLoader::~ModelLoader() {
 bool ModelLoader::load(const std::string& filepath) {
     unload();
 
-    file_descriptor_ = open(filepath.c_str(), O_RDONLY);
-    if (file_descriptor_ < 0) {
+    int fd = open(filepath.c_str(), O_RDONLY);
+    if (fd < 0) {
         LOGE("Error abriendo archivo %s", filepath.c_str());
         return false;
     }
-    owns_fd_ = true;
 
     struct stat sb{};
-    if (fstat(file_descriptor_, &sb) < 0) {
+    if (fstat(fd, &sb) < 0) {
         LOGE("Error obteniendo tamaño de archivo %s", filepath.c_str());
-        close(file_descriptor_);
-        file_descriptor_ = -1;
+        close(fd);
         return false;
     }
 
-    mapped_size_ = static_cast<size_t>(sb.st_size);
-    if (mapped_size_ < 16) {
-        LOGE("Archivo demasiado pequeño (%zu bytes)", mapped_size_);
-        close(file_descriptor_);
-        file_descriptor_ = -1;
+    size_t file_size = static_cast<size_t>(sb.st_size);
+    if (file_size < 16) {
+        LOGE("Archivo demasiado pequeño (%zu bytes)", file_size);
+        close(fd);
         return false;
     }
 
-    void* addr = mmap(nullptr, mapped_size_, PROT_READ, MAP_SHARED, file_descriptor_, 0);
-    if (addr == MAP_FAILED) {
-        LOGE("mmap falló para %s (tamaño: %zu bytes)", filepath.c_str(), mapped_size_);
-        close(file_descriptor_);
-        file_descriptor_ = -1;
-        mapped_size_ = 0;
-        return false;
-    }
-
-    mapped_data_ = static_cast<uint8_t*>(addr);
-    metadata_.file_size = mapped_size_;
-
+    metadata_.file_size = file_size;
     size_t last_slash = filepath.find_last_of('/');
     metadata_.filename = (last_slash != std::string::npos) ? filepath.substr(last_slash + 1) : filepath;
 
-    if (!parse_metadata(filepath)) {
-        LOGW("Archivo cargado pero metadatos no reconocidos con precisión");
+    uint8_t header_buf[64] = {0};
+    ssize_t bytes_read = pread(fd, header_buf, sizeof(header_buf), 0);
+    close(fd);
+
+    if (bytes_read < 8) {
+        LOGE("Error leyendo cabecera del archivo %s", filepath.c_str());
+        return false;
     }
 
-    LOGI("Modelo cargado exitosamente vía mmap: %s (%zu MB)",
-         metadata_.filename.c_str(), mapped_size_ / (1024 * 1024));
-    return true;
+    if (!parse_metadata(filepath, header_buf, static_cast<size_t>(bytes_read))) {
+        LOGW("Archivo verificado pero metadatos no reconocidos con precisión");
+    }
+
+    LOGI("Cabecera de modelo validada exitosamente: %s (%zu MB)",
+         metadata_.filename.c_str(), metadata_.file_size / (1024 * 1024));
+    return metadata_.is_valid;
 }
 
 bool ModelLoader::load_fd(int fd, size_t size, const std::string& name) {
@@ -79,53 +74,36 @@ bool ModelLoader::load_fd(int fd, size_t size, const std::string& name) {
         return false;
     }
 
-    file_descriptor_ = fd;
-    owns_fd_ = false; // El FD proviene de ParcelFileDescriptor de Android
-    mapped_size_ = size;
+    metadata_.file_size = size;
+    metadata_.filename = name;
 
-    void* addr = mmap(nullptr, mapped_size_, PROT_READ, MAP_SHARED, file_descriptor_, 0);
-    if (addr == MAP_FAILED) {
-        LOGE("mmap falló para descriptor fd=%d (tamaño: %zu bytes)", fd, mapped_size_);
-        file_descriptor_ = -1;
-        mapped_size_ = 0;
+    uint8_t header_buf[64] = {0};
+    ssize_t bytes_read = pread(fd, header_buf, sizeof(header_buf), 0);
+    if (bytes_read < 8) {
+        LOGE("Error leyendo cabecera para descriptor fd=%d", fd);
         return false;
     }
 
-    mapped_data_ = static_cast<uint8_t*>(addr);
-    metadata_.file_size = mapped_size_;
-    metadata_.filename = name;
-
-    if (!parse_metadata(name)) {
-        LOGW("FD cargado pero metadatos no reconocidos con precisión");
+    if (!parse_metadata(name, header_buf, static_cast<size_t>(bytes_read))) {
+        LOGW("FD verificado pero metadatos no reconocidos con precisión");
     }
 
-    LOGI("Modelo cargado exitosamente vía mmap (Zero-Copy FD): %s (%zu MB)",
-         metadata_.filename.c_str(), mapped_size_ / (1024 * 1024));
-    return true;
+    LOGI("Cabecera de modelo validada vía FD: %s (%zu MB)",
+         metadata_.filename.c_str(), metadata_.file_size / (1024 * 1024));
+    return metadata_.is_valid;
 }
 
 void ModelLoader::unload() {
-    if (mapped_data_ != nullptr && mapped_size_ > 0) {
-        munmap(mapped_data_, mapped_size_);
-        mapped_data_ = nullptr;
-    }
-    if (file_descriptor_ >= 0) {
-        if (owns_fd_) {
-            close(file_descriptor_);
-        }
-        file_descriptor_ = -1;
-    }
-    mapped_size_ = 0;
     metadata_ = ModelMetadata{};
 }
 
-bool ModelLoader::parse_metadata(const std::string& filepath) {
-    if (!mapped_data_ || mapped_size_ < 4) return false;
+bool ModelLoader::parse_metadata(const std::string& filepath, const uint8_t* header, size_t header_size) {
+    if (!header || header_size < 4) return false;
 
-    if (check_gguf_magic(mapped_data_, mapped_size_, metadata_)) {
+    if (check_gguf_magic(header, header_size, metadata_)) {
         return true;
     }
-    if (check_litert_magic(mapped_data_, mapped_size_, metadata_)) {
+    if (check_litert_magic(header, header_size, metadata_)) {
         return true;
     }
 

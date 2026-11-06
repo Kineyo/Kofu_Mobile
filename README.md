@@ -5,11 +5,12 @@
 </p>
 
 <p align="center">
-  <a href="https://huggingface.co/shebxyd/kofu-2b-edge"><img src="https://img.shields.io/badge/🤗%20Hugging%20Face-shebxyd%2Fkofu--2b--edge-yellow?style=for-the-badge" alt="Hugging Face Model"></a>
+  <a href="https://huggingface.co/shebxyd/kofu-v2-edge"><img src="https://img.shields.io/badge/🤗%20Hugging%20Face-shebxyd%2Fkofu--v2--edge-yellow?style=for-the-badge" alt="Hugging Face Model"></a>
+  <img src="https://img.shields.io/badge/Version-v2.1%20%5BEstable%5D-brightgreen?style=for-the-badge" alt="Version 2.1">
   <img src="https://img.shields.io/badge/Backend-C%2B%2B20%20NDK%20r26-00599C?style=for-the-badge&logo=cplusplus&logoColor=white" alt="C++20 NDK">
   <img src="https://img.shields.io/badge/UI-Jetpack%20Compose-4285F4?style=for-the-badge&logo=jetpackcompose&logoColor=white" alt="Jetpack Compose">
   <img src="https://img.shields.io/badge/Android-8.0%2B-3DDC84?style=for-the-badge&logo=android&logoColor=white" alt="Android">
-  <img src="https://img.shields.io/badge/Inference-GGUF%20%7C%20LiteRT-FF6F00?style=for-the-badge&logo=google&logoColor=white" alt="Inference">
+  <img src="https://img.shields.io/badge/Inference-GGUF%20%7C%20llama.cpp-FF6F00?style=for-the-badge&logo=cplusplus&logoColor=white" alt="Inference">
   <img src="https://img.shields.io/badge/Privacy-100%25%20On--Device-10B981?style=for-the-badge&logo=shield&logoColor=white" alt="Privacy">
   <img src="https://img.shields.io/badge/Architecture-ARM64--v8a-0091BD?style=for-the-badge&logo=arm&logoColor=white" alt="ARM64">
   <img src="https://img.shields.io/badge/License-MIT-00f5d4?style=for-the-badge&logoColor=black" alt="MIT License">
@@ -75,12 +76,12 @@ flowchart TD
 ```
 
 ### 1. Detección y Descarga Automática del Modelo Oficial
-Al iniciar por primera vez, [`LlamaRepository`](Kofu_Assistant/app/src/main/java/com/kofu/assistant/repository/LlamaRepository.kt) comprueba el directorio de almacenamiento privado de la app:
+Al iniciar por primera vez, [`LlamaRepository`](Kofu_Assistant/app/src/main/java/com/kofu/assistant/repository/LlamaRepository.kt) comprueba el almacenamiento del dispositivo:
 * **Si el modelo ya existe:** Se inicializa de inmediato a través del motor C++ mediante `mmap` en menos de 100 milisegundos.
-* **Si no existe:** Se conecta de forma segura a Hugging Face para descargar automáticamente el modelo oficial del proyecto:
-  * **Modelo Oficial:** [`shebxyd/kofu-2b-edge`](https://huggingface.co/shebxyd/kofu-2b-edge)
-  * **Archivo:** `kofu-gemma-2b-edge-q4_k_m.gguf` (~1.4 GB)
-  * **Fallback secundario:** Si no hubiera conexión directa al modelo GGUF, cuenta con enlace de respaldo a paquetes LiteRT.
+* **Si no existe:** Se conecta de forma segura a Hugging Face para descargar automáticamente el modelo oficial del proyecto mediante un `Foreground Service` persistente con soporte de reanudación:
+  * **Modelo Oficial Predeterminado (v2.1):** [`shebxyd/kofu-v2-edge`](https://huggingface.co/shebxyd/kofu-v2-edge) — Archivo: `kofu-v2-edge-q4_k_m.gguf` (~1.6 GB, basado en Google Gemma 2 2B Instruct).
+  * **Modelo Ultraligero:** [`shebxyd/kofu-2b-edge`](https://huggingface.co/shebxyd/kofu-2b-edge) — Archivo: `kofu-gemma-2b-edge-q4_k_m.gguf` (~1.4 GB, basado en Gemma 1 2B).
+  * **Modelo Pro (12GB+ RAM):** [`shebxyd/kofu-gemma4-edge`](https://huggingface.co/shebxyd/kofu-gemma4-edge) — Archivo: `kofu-gemma4-edge-q4_k_m.gguf` (~5.3 GB).
 * **Carga manual (Botón `+`):** Si ya cuentas con un archivo `.gguf`, `.litertlm` o `.task` en la memoria de tu teléfono, puedes cargarlo directamente tocando el botón `+`.
 
 ### 2. Verificación de Seguridad Binaria (*Magic Numbers*)
@@ -104,55 +105,71 @@ Al enviar un prompt:
 
 ```text
 Kofu_Mobile/
+├── .github/
+│   └── workflows/
+│       └── release.yml              # CI/CD automatizado: compilación NDK y release en GitHub
 ├── assets/
 │   ├── images/
 │   │   ├── banner.jpeg              # Banner horizontal del proyecto
 │   │   └── kofu_character.png       # Arte del personaje Kofu
-│   └── huggingface/
-│       ├── banner.jpg               # Banner oficial para Hugging Face Hub
-│       ├── README.md                # Model Card oficial para HF Hub
-│       └── LICENSE.txt              # Términos de licencia Gemma
+│   └── huggingface_v2/
+│       ├── banner.jpeg              # Banner oficial para Hugging Face Hub
+│       ├── README.md                # Model Card oficial para HF Hub (Gemma 2)
+│       └── LICENSE                  # Términos de licencia Gemma
 ├── Kofu_Assistant/
 │   └── app/
 │       ├── build.gradle.kts         # Configuración NDK 26, CMake 3.22 y AAPT noCompress
 │       └── src/main/
-│           ├── AndroidManifest.xml  # Configuración y permisos mínimos (INTERNET para descargas)
+│           ├── AndroidManifest.xml  # Configuración y permisos mínimos (INTERNET y Foreground Service)
 │           ├── cpp/                 # ⚙️ MOTOR NATIVO C++20
 │           │   ├── CMakeLists.txt   # Script de construcción nativa Android NDK
+│           │   ├── llama.cpp/       # Motor embebido de inferencia tensor GGUF ARM64
 │           │   ├── include/
 │           │   │   ├── kofu_engine.hpp      # Interfaz del motor nativo de inferencia
-│           │   │   ├── model_loader.hpp     # Cargador mmap y validador de magic numbers
-│           │   │   └── prompt_formatter.hpp # Sanitizador y formateador de plantillas
+│           │   │   ├── model_loader.hpp     # Cargador y validador de cabeceras binarias
+│           │   │   └── prompt_formatter.hpp # Sanitizador y formateador de plantillas Gemma
 │           │   └── src/
 │           │       ├── kofu_engine.cpp      # Implementación del ciclo de inferencia y benchmarks
-│           │       ├── model_loader.cpp     # Mapeo de memoria POSIX y validación binaria
+│           │       ├── model_loader.cpp     # Validación binaria rápida de cabeceras
 │           │       ├── prompt_formatter.cpp # Lógica de seguridad contra prompt injection
 │           │       └── kofu_jni.cpp         # Puente JNI que expone funciones a Kotlin
-│           ├── assets/
-│           │   └── avatar_kofu.png  # Avatar ilustrado integrado en el chat
 │           └── java/com/kofu/assistant/
 │               ├── MainActivity.kt             # Ciclo de vida y tema visual
+│               ├── data/
+│               │   ├── AppUpdateManager.kt     # Verificador y gestor de actualizaciones GitHub Releases
+│               │   └── ChatCacheManager.kt     # Persistencia atómica de conversaciones (AtomicFile)
 │               ├── repository/
 │               │   ├── KofuNativeEngine.kt     # Enlace JNI con libkofu_engine.so
-│               │   └── LlamaRepository.kt      # Gestor de descargas y estados de inferencia
+│               │   ├── LlamaRepository.kt      # Gestor de modelos, inferencia y telemetría
+│               │   └── OllamaClient.kt         # Cliente HTTP de inferencia para Ollama
+│               ├── service/
+│               │   └── ModelDownloadService.kt # Foreground Service con soporte de reanudación
 │               └── ui/
-│                   ├── ChatScreen.kt           # Vista del chat, chips y selector de modelos
+│                   ├── ChatScreen.kt           # Vista del chat, chips y streaming reactivo
+│                   ├── components/
+│                   │   ├── DebugHud.kt         # HUD de telemetría de rendimiento y memoria
+│                   │   ├── SettingsDialog.kt   # Diálogo de ajustes y botón de actualización
+│                   │   └── TermsDialog.kt      # Términos de uso y privacidad
 │                   └── theme/
-│                       └── KofuTheme.kt        # Paleta estética moderna
-├── LICENSE                          # Licencia MIT
-└── README.md                        # Documentación técnica completa
+│                       └── KofuTheme.kt        # Paleta estética moderna (Dark, OLED, Light)
+├── dist/                                    # Binarios APK listos para distribución
+├── LICENSE                                  # Licencia MIT
+└── README.md                                # Documentación técnica completa
 ```
 
 ---
 
-## 🤖 Modelo Oficial: `shebxyd/kofu-2b-edge`
+## 🤖 Modelo Oficial: `shebxyd/kofu-v2-edge` (v2.1)
 
-El modelo predeterminado de Kofu es una versión especializada basada en **Google Gemma 2B IT** entrenada con **LoRA** (*Low-Rank Adaptation*) en Google Colab sobre tareas multidisciplinarias:
-* 💻 **Programación y Algoritmos:** Generación y depuración de código en Python, Kotlin, C++ y JavaScript.
-* 🧪 **Razonamiento Científico:** Resolución de problemas de química, física y matemáticas.
-* 🇪🇸 **Español Nativo Fluido:** Explicaciones claras, sintéticas y naturales en español.
-* 📦 **Cuantización Q4_K_M:** Reducción de 5.0 GB originales a solo ~1.4 GB con mínima pérdida de perplejidad, ideal para dispositivos con 6 GB a 8 GB de memoria RAM.
-* 🔗 **Repositorio en Hugging Face:** [shebxyd/kofu-2b-edge](https://huggingface.co/shebxyd/kofu-2b-edge)
+El modelo predeterminado de Kofu es una versión especializada basada en **Google Gemma 2 2B IT** entrenada con **LoRA** (*Low-Rank Adaptation*) sobre tareas multidisciplinarias:
+* 💻 **Programación y Algoritmos:** Generación y depuración de código en C++, Python, Kotlin y Web.
+* 🧪 **Razonamiento Científico:** Matemáticas, ciencias y lógica estructurada.
+* 🇪🇸 **Español Nativo Fluido:** Explicaciones claras, sintéticas, amables y precisas.
+* 📦 **Cuantización Q4_K_M:** Reducción a ~1.6 GB con máxima preservación de razonamiento, ideal para móviles con 6 GB a 8 GB de memoria RAM.
+* 🔗 **Modelos Disponibles en Hugging Face:**
+  - [`shebxyd/kofu-v2-edge`](https://huggingface.co/shebxyd/kofu-v2-edge) *(Predeterminado / Recomendado, Gemma 2 2B)*
+  - [`shebxyd/kofu-2b-edge`](https://huggingface.co/shebxyd/kofu-2b-edge) *(Modo Ultraligero, Gemma 1 2B)*
+  - [`shebxyd/kofu-gemma4-edge`](https://huggingface.co/shebxyd/kofu-gemma4-edge) *(Modo Pro Flagship 12GB+ RAM, Gemma 4 E4B)*
 
 ---
 

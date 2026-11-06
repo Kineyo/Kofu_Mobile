@@ -61,6 +61,7 @@ private:
     void unload_model_locked();
 
     mutable std::mutex engine_mutex_;
+    mutable std::mutex stats_mutex_;
     std::unique_ptr<ModelLoader> loader_;
     llama_model* lmodel_{nullptr};
     llama_context* lctx_{nullptr};
@@ -68,6 +69,7 @@ private:
     std::string model_name_;
     int owned_fd_{-1};
 
+    std::atomic<bool> is_model_loaded_{false};
     std::atomic<bool> is_generating_{false};
     std::atomic<bool> is_cancelled_{false};
 

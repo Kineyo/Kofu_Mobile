@@ -59,12 +59,17 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
+import com.kofu.assistant.data.AppUpdateManager
+import com.kofu.assistant.data.UpdateCheckResult
 import com.kofu.assistant.repository.BackendMode
 import com.kofu.assistant.repository.LlamaRepository
 import com.kofu.assistant.ui.theme.KofuDesignSystem
 import com.kofu.assistant.ui.theme.KofuFontScale
 import com.kofu.assistant.ui.theme.KofuThemeMode
 import com.kofu.assistant.ui.theme.LocalKofuColors
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 @Composable
 fun SettingsDialog(
@@ -99,6 +104,29 @@ fun SettingsDialog(
                 "Sin respuesta del servidor Ollama"
             }
             repository.savePreferences(context)
+        }
+    }
+
+    var updateResult by remember { mutableStateOf<UpdateCheckResult>(UpdateCheckResult.Idle) }
+
+    fun triggerCheckUpdate() {
+        updateResult = UpdateCheckResult.Loading
+        scope.launch {
+            val res = AppUpdateManager.checkLatestRelease()
+            withContext(Dispatchers.Main) {
+                updateResult = res.fold(
+                    onSuccess = { release ->
+                        if (release.isNewer) {
+                            UpdateCheckResult.UpdateAvailable(release)
+                        } else {
+                            UpdateCheckResult.UpToDate(AppUpdateManager.CURRENT_VERSION_NAME, release.tagName)
+                        }
+                    },
+                    onFailure = { err ->
+                        UpdateCheckResult.Error(err.localizedMessage ?: "Error consultando GitHub")
+                    }
+                )
+            }
         }
     }
 
@@ -711,7 +739,149 @@ fun SettingsDialog(
                         }
                     }
 
-                    // SECCIÓN 5: ACCIONES
+                    // SECCIÓN 5: ACTUALIZACIONES DE SOFTWARE
+                    FormalSectionTitle(title = "ACTUALIZACIONES DE SOFTWARE")
+
+                    Surface(
+                        color = colors.surfaceVariant,
+                        shape = KofuDesignSystem.CardShape,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(KofuDesignSystem.CardShape)
+                            .border(1.dp, colors.divider, KofuDesignSystem.CardShape)
+                    ) {
+                        Column(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(10.dp),
+                            verticalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.SpaceBetween
+                            ) {
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text(
+                                        text = "Kofu Mobile v${AppUpdateManager.CURRENT_VERSION_NAME}",
+                                        fontSize = 11.5.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        color = colors.onSurface
+                                    )
+                                    Text(
+                                        text = "GitHub Releases • Tag objetivo: 2.1",
+                                        fontSize = 10.sp,
+                                        color = colors.onSurfaceSecondary
+                                    )
+                                }
+
+                                OutlinedButton(
+                                    onClick = { triggerCheckUpdate() },
+                                    enabled = updateResult !is UpdateCheckResult.Loading,
+                                    shape = KofuDesignSystem.ButtonShape,
+                                    modifier = Modifier.height(30.dp)
+                                ) {
+                                    if (updateResult is UpdateCheckResult.Loading) {
+                                        CircularProgressIndicator(
+                                            strokeWidth = 2.dp,
+                                            color = colors.accent,
+                                            modifier = Modifier.size(12.dp)
+                                        )
+                                        Spacer(modifier = Modifier.width(4.dp))
+                                        Text("Buscando...", fontSize = 10.sp)
+                                    } else {
+                                        Icon(
+                                            imageVector = Icons.Default.Refresh,
+                                            contentDescription = null,
+                                            tint = colors.accent,
+                                            modifier = Modifier.size(12.dp)
+                                        )
+                                        Spacer(modifier = Modifier.width(4.dp))
+                                        Text("Buscar", fontSize = 10.sp, color = colors.onSurface)
+                                    }
+                                }
+                            }
+
+                            when (val res = updateResult) {
+                                is UpdateCheckResult.UpdateAvailable -> {
+                                    Surface(
+                                        color = colors.surfaceElevated,
+                                        shape = KofuDesignSystem.ButtonShape,
+                                        border = androidx.compose.foundation.BorderStroke(1.dp, colors.successAccent),
+                                        modifier = Modifier.fillMaxWidth()
+                                    ) {
+                                        Column(
+                                            modifier = Modifier.padding(8.dp),
+                                            verticalArrangement = Arrangement.spacedBy(6.dp)
+                                        ) {
+                                            Row(
+                                                verticalAlignment = Alignment.CenterVertically,
+                                                horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                            ) {
+                                                Icon(
+                                                    imageVector = Icons.Default.Check,
+                                                    contentDescription = null,
+                                                    tint = colors.successAccent,
+                                                    modifier = Modifier.size(14.dp)
+                                                )
+                                                Text(
+                                                    text = "¡Nueva versión disponible: ${res.release.tagName}!",
+                                                    fontSize = 11.sp,
+                                                    fontWeight = FontWeight.Bold,
+                                                    color = colors.successAccent
+                                                )
+                                            }
+                                            if (res.release.title.isNotBlank()) {
+                                                Text(
+                                                    text = res.release.title,
+                                                    fontSize = 10.5.sp,
+                                                    color = colors.onSurfaceSecondary
+                                                )
+                                            }
+                                            Button(
+                                                onClick = {
+                                                    val url = res.release.apkDownloadUrl ?: res.release.releasePageUrl
+                                                    AppUpdateManager.openDownload(context, url)
+                                                },
+                                                shape = KofuDesignSystem.ButtonShape,
+                                                colors = ButtonDefaults.buttonColors(
+                                                    containerColor = colors.successAccent,
+                                                    contentColor = colors.background
+                                                ),
+                                                modifier = Modifier
+                                                    .fillMaxWidth()
+                                                    .height(32.dp)
+                                            ) {
+                                                Text(
+                                                    text = "Descargar APK (${res.release.tagName})",
+                                                    fontSize = 11.sp,
+                                                    fontWeight = FontWeight.Bold
+                                                )
+                                            }
+                                        }
+                                    }
+                                }
+                                is UpdateCheckResult.UpToDate -> {
+                                    Text(
+                                        text = "✓ Tienes la versión más reciente (${res.latestTag})",
+                                        fontSize = 10.5.sp,
+                                        color = colors.successAccent,
+                                        fontFamily = FontFamily.Monospace
+                                    )
+                                }
+                                is UpdateCheckResult.Error -> {
+                                    Text(
+                                        text = "Aviso: ${res.message}",
+                                        fontSize = 10.5.sp,
+                                        color = colors.warningAccent
+                                    )
+                                }
+                                UpdateCheckResult.Idle, UpdateCheckResult.Loading -> {}
+                            }
+                        }
+                    }
+
+                    // SECCIÓN 6: ACCIONES
                     FormalSectionTitle(title = "ACCIONES")
 
                     Surface(

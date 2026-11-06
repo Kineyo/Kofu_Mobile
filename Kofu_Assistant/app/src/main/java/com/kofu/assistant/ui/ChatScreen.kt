@@ -1225,7 +1225,11 @@ fun FormalFormattedContent(
     val context = LocalContext.current
     val codeBlockRegex = remember { Regex("```([a-zA-Z0-9_-]*)\\n?([\\s\\S]*?)```") }
 
-    if (!text.contains("```")) {
+    // Si durante el streaming hay un bloque de código abierto sin cerrar, lo cerramos virtualmente para renderizarlo inmediatamente
+    val isUnclosedCodeBlock = text.contains("```") && (text.split("```").size % 2 == 0)
+    val renderText = if (isUnclosedCodeBlock) "$text\n```" else text
+
+    if (!renderText.contains("```")) {
         Text(
             text = text,
             fontSize = fontScale.bodySp.sp,
@@ -1237,12 +1241,12 @@ fun FormalFormattedContent(
         return
     }
 
-    val matches = codeBlockRegex.findAll(text).toList()
+    val matches = codeBlockRegex.findAll(renderText).toList()
     var lastIndex = 0
 
     Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
         for (match in matches) {
-            val preText = text.substring(lastIndex, match.range.first).trim()
+            val preText = renderText.substring(lastIndex, match.range.first).trim()
             if (preText.isNotEmpty()) {
                 Text(
                     text = preText,
@@ -1301,9 +1305,9 @@ fun FormalFormattedContent(
             }
             lastIndex = match.range.last + 1
         }
-        if (lastIndex < text.length) {
-            val postText = text.substring(lastIndex).trim()
-            if (postText.isNotEmpty()) {
+        if (lastIndex < renderText.length) {
+            val postText = renderText.substring(lastIndex).trim()
+            if (postText.isNotEmpty() && (!isUnclosedCodeBlock || postText != "```")) {
                 Text(
                     text = postText,
                     fontSize = fontScale.bodySp.sp,

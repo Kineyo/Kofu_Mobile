@@ -20,6 +20,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
@@ -190,73 +191,90 @@ class ModelDownloadService : Service() {
                 .followSslRedirects(true)
                 .build()
 
-            var existingLength = 0L
-            if (targetFile.exists()) {
-                existingLength = targetFile.length()
-            }
+            var attempt = 0
+            val maxAttempts = 3
+            var completedSuccessfully = false
 
-            val requestBuilder = Request.Builder().url(url)
-            if (existingLength > 0) {
-                requestBuilder.header("Range", "bytes=$existingLength-")
-            }
+            while (attempt < maxAttempts && !completedSuccessfully) {
+                var existingLength = 0L
+                if (targetFile.exists()) {
+                    existingLength = targetFile.length()
+                }
 
-            try {
-                client.newCall(requestBuilder.build()).execute().use { response ->
-                    val code = response.code
-                    val isResume = (code == 206)
+                val requestBuilder = Request.Builder().url(url)
+                if (existingLength > 0) {
+                    requestBuilder.header("Range", "bytes=$existingLength-")
+                }
 
-                    if (code != 200 && code != 206) {
-                        if (code == 416) { // Range ya completado
-                            onDownloadSuccess(targetFile, modelName)
+                try {
+                    client.newCall(requestBuilder.build()).execute().use { response ->
+                        val code = response.code
+                        val isResume = (code == 206)
+
+                        if (code != 200 && code != 206) {
+                            if (code == 416) { // Range ya completado
+                                onDownloadSuccess(targetFile, modelName)
+                                completedSuccessfully = true
+                                return@launch
+                            }
+                            notifyError("Error del servidor: HTTP $code")
                             return@launch
                         }
-                        notifyError("Error del servidor: HTTP $code")
-                        return@launch
-                    }
 
-                    val body = response.body
-                    if (body == null) {
-                        notifyError("Cuerpo de respuesta vacío")
-                        return@launch
-                    }
+                        val body = response.body
+                        if (body == null) {
+                            notifyError("Cuerpo de respuesta vacío")
+                            return@launch
+                        }
 
-                    val contentLength = body.contentLength()
-                    val totalLength = if (isResume) existingLength + contentLength else contentLength
+                        val contentLength = body.contentLength()
+                        val totalLength = if (isResume) existingLength + contentLength else contentLength
 
-                    val inputStream = body.byteStream()
-                    val outputStream = FileOutputStream(targetFile, isResume)
-                    val buffer = ByteArray(32 * 1024)
-                    var read: Int
-                    var downloaded = if (isResume) existingLength else 0L
-                    var lastProgressUpdate = System.currentTimeMillis()
+                        val inputStream = body.byteStream()
+                        val outputStream = FileOutputStream(targetFile, isResume)
+                        val buffer = ByteArray(32 * 1024)
+                        var read: Int
+                        var downloaded = if (isResume) existingLength else 0L
+                        var lastProgressUpdate = 0L
+                        var lastReportedPercent = -1
 
-                    outputStream.use { out ->
-                        inputStream.use { inp ->
-                            while (inp.read(buffer).also { read = it } != -1) {
-                                out.write(buffer, 0, read)
-                                downloaded += read
+                        outputStream.use { out ->
+                            inputStream.use { inp ->
+                                while (inp.read(buffer).also { read = it } != -1) {
+                                    out.write(buffer, 0, read)
+                                    downloaded += read
 
-                                val now = System.currentTimeMillis()
-                                if (now - lastProgressUpdate > 300 || downloaded == totalLength) {
+                                    val now = System.currentTimeMillis()
                                     val percent = if (totalLength > 0) ((downloaded * 100) / totalLength).toInt() else 0
-                                    withContext(Dispatchers.Main) {
-                                        updateProgress(modelName, percent)
+                                    if ((now - lastProgressUpdate >= 1000L && percent != lastReportedPercent) || downloaded == totalLength) {
+                                        withContext(Dispatchers.Main) {
+                                            updateProgress(modelName, percent)
+                                        }
+                                        lastProgressUpdate = now
+                                        lastReportedPercent = percent
                                     }
-                                    lastProgressUpdate = now
                                 }
                             }
                         }
-                    }
 
-                    if (totalLength <= 0 || downloaded >= totalLength) {
-                        onDownloadSuccess(targetFile, modelName)
+                        if (totalLength <= 0 || downloaded >= totalLength) {
+                            onDownloadSuccess(targetFile, modelName)
+                            completedSuccessfully = true
+                        }
+                    }
+                } catch (e: Exception) {
+                    attempt++
+                    Log.w(TAG, "Intento $attempt/$maxAttempts fallido: ${e.message}")
+                    if (attempt < maxAttempts) {
+                        withContext(Dispatchers.Main) {
+                            LlamaRepository.downloadStatusText = "Reconectando con Hugging Face (intento $attempt/$maxAttempts)..."
+                        }
+                        delay(2000L * attempt)
                     } else {
-                        notifyError("Descarga incompleta")
+                        Log.e(TAG, "Excepción definitiva durante descarga en segundo plano", e)
+                        notifyError("Error de red tras $maxAttempts intentos: ${e.localizedMessage ?: "Conexión perdida"}")
                     }
                 }
-            } catch (e: Exception) {
-                Log.e(TAG, "Excepción durante descarga en segundo plano", e)
-                notifyError("Error de red: ${e.localizedMessage ?: "Conexión perdida"}")
             }
         }
     }

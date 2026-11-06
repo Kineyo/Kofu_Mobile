@@ -122,7 +122,7 @@ Java_com_kofu_assistant_repository_KofuNativeEngine_nativeGenerateStream(
     }
 
     auto token_emitter = [env, j_callback, on_token_method](const std::string& token) {
-        if (env->ExceptionCheck()) return;
+        if (token.empty() || env->ExceptionCheck()) return;
         jstring j_token = env->NewStringUTF(token.c_str());
         env->CallVoidMethod(j_callback, on_token_method, j_token);
         env->DeleteLocalRef(j_token);
@@ -170,7 +170,7 @@ Java_com_kofu_assistant_repository_KofuNativeEngine_nativeGenerateStreamHistory(
     // Dado que se ejecuta en el mismo hilo de Dispatchers.IO, reutilizamos env directamente
     // evitando el costoso Attach/Detach en cada token individual.
     auto token_emitter = [env, j_callback, on_token_method](const std::string& token) {
-        if (env->ExceptionCheck()) return;
+        if (token.empty() || env->ExceptionCheck()) return;
         jstring j_token = env->NewStringUTF(token.c_str());
         env->CallVoidMethod(j_callback, on_token_method, j_token);
         env->DeleteLocalRef(j_token);

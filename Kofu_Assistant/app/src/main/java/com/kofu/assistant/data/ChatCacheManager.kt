@@ -2,9 +2,11 @@ package com.kofu.assistant.data
 
 import android.content.Context
 import android.util.Log
+import androidx.core.util.AtomicFile
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
+import java.io.FileOutputStream
 import java.util.UUID
 
 data class ChatMessageData(
@@ -39,6 +41,7 @@ object ChatCacheManager {
     @Synchronized
     fun loadSessions(context: Context): MutableList<ChatSession> {
         val file = getCacheFile(context)
+        val atomicFile = AtomicFile(file)
         if (!file.exists() || file.length() == 0L) {
             val defaultSession = ChatSession(
                 title = "Conversación inicial",
@@ -55,7 +58,7 @@ object ChatCacheManager {
         }
 
         return try {
-            val content = file.readText(Charsets.UTF_8)
+            val content = String(atomicFile.readFully(), Charsets.UTF_8)
             val root = JSONObject(content)
             val sessionsArray = root.optJSONArray("sessions") ?: JSONArray()
             val list = mutableListOf<ChatSession>()
@@ -120,8 +123,10 @@ object ChatCacheManager {
 
     @Synchronized
     fun saveSessions(context: Context, sessions: List<ChatSession>) {
+        val file = getCacheFile(context)
+        val atomicFile = AtomicFile(file)
+        var fos: FileOutputStream? = null
         try {
-            val file = getCacheFile(context)
             val root = JSONObject()
             val sessionsArray = JSONArray()
 
@@ -148,9 +153,15 @@ object ChatCacheManager {
             }
 
             root.put("sessions", sessionsArray)
-            file.writeText(root.toString(2), Charsets.UTF_8)
+            val bytes = root.toString().toByteArray(Charsets.UTF_8)
+            fos = atomicFile.startWrite()
+            fos.write(bytes)
+            atomicFile.finishWrite(fos)
         } catch (e: Exception) {
-            Log.e(TAG, "Error guardando caché de chats", e)
+            if (fos != null) {
+                atomicFile.failWrite(fos)
+            }
+            Log.e(TAG, "Error guardando caché de chats con AtomicFile", e)
         }
     }
 }
