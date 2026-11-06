@@ -13,7 +13,7 @@ static JavaVM* g_jvm = nullptr;
 
 jint JNI_OnLoad(JavaVM* vm, void* /*reserved*/) {
     g_jvm = vm;
-    LOGI("JNI_OnLoad: JavaVM registrado correctamente para Kofu v2.0");
+    LOGI("JNI_OnLoad: JavaVM registrado correctamente para Kofu Engine llama.cpp");
     return JNI_VERSION_1_6;
 }
 
@@ -24,7 +24,7 @@ Java_com_kofu_assistant_repository_KofuNativeEngine_nativeInit(
     JNIEnv* /*env*/,
     jobject /*thiz*/
 ) {
-    LOGI("Kofu Native C++ Engine v2.0 inicializado con soporte multi-turno");
+    LOGI("Kofu Native llama.cpp Engine inicializado con soporte multi-turno");
     return JNI_TRUE;
 }
 
@@ -121,31 +121,13 @@ Java_com_kofu_assistant_repository_KofuNativeEngine_nativeGenerateStream(
         return;
     }
 
-    jobject global_callback = env->NewGlobalRef(j_callback);
-
-    auto token_emitter = [global_callback, on_token_method](const std::string& token) {
-        if (!g_jvm) return;
-        JNIEnv* current_env = nullptr;
-        bool attached = false;
-        jint res = g_jvm->GetEnv(reinterpret_cast<void**>(&current_env), JNI_VERSION_1_6);
-        if (res == JNI_EDETACHED) {
-            if (g_jvm->AttachCurrentThread(&current_env, nullptr) == 0) {
-                attached = true;
-            }
-        }
-        if (current_env) {
-            jstring j_token = current_env->NewStringUTF(token.c_str());
-            current_env->CallVoidMethod(global_callback, on_token_method, j_token);
-            current_env->DeleteLocalRef(j_token);
-        }
-        if (attached) {
-            g_jvm->DetachCurrentThread();
-        }
+    auto token_emitter = [env, j_callback, on_token_method](const std::string& token) {
+        jstring j_token = env->NewStringUTF(token.c_str());
+        env->CallVoidMethod(j_callback, on_token_method, j_token);
+        env->DeleteLocalRef(j_token);
     };
 
     kofu::KofuEngine::instance().generate_stream(prompt, token_emitter);
-
-    env->DeleteGlobalRef(global_callback);
 }
 
 JNIEXPORT void JNICALL
@@ -181,31 +163,15 @@ Java_com_kofu_assistant_repository_KofuNativeEngine_nativeGenerateStreamHistory(
     jmethodID on_token_method = env->GetMethodID(callback_class, "onToken", "(Ljava/lang/String;)V");
     if (!on_token_method) return;
 
-    jobject global_callback = env->NewGlobalRef(j_callback);
-
-    auto token_emitter = [global_callback, on_token_method](const std::string& token) {
-        if (!g_jvm) return;
-        JNIEnv* current_env = nullptr;
-        bool attached = false;
-        jint res = g_jvm->GetEnv(reinterpret_cast<void**>(&current_env), JNI_VERSION_1_6);
-        if (res == JNI_EDETACHED) {
-            if (g_jvm->AttachCurrentThread(&current_env, nullptr) == 0) {
-                attached = true;
-            }
-        }
-        if (current_env) {
-            jstring j_token = current_env->NewStringUTF(token.c_str());
-            current_env->CallVoidMethod(global_callback, on_token_method, j_token);
-            current_env->DeleteLocalRef(j_token);
-        }
-        if (attached) {
-            g_jvm->DetachCurrentThread();
-        }
+    // Dado que se ejecuta en el mismo hilo de Dispatchers.IO, reutilizamos env directamente
+    // evitando el costoso Attach/Detach en cada token individual.
+    auto token_emitter = [env, j_callback, on_token_method](const std::string& token) {
+        jstring j_token = env->NewStringUTF(token.c_str());
+        env->CallVoidMethod(j_callback, on_token_method, j_token);
+        env->DeleteLocalRef(j_token);
     };
 
     kofu::KofuEngine::instance().generate_stream_history(history, token_emitter);
-
-    env->DeleteGlobalRef(global_callback);
 }
 
 JNIEXPORT void JNICALL

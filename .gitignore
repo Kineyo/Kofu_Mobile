@@ -1,9 +1,10 @@
 # ====================================================================
-# Gradle & Build Cache
+# Android, Gradle & Build Outputs
 # ====================================================================
 .gradle/
 **/build/
 build/
+dist/
 *.apk
 *.ap_
 *.aab
@@ -11,32 +12,72 @@ build/
 *.class
 
 # ====================================================================
-# Android Studio & IDEs
+# C / C++ Native Build Outputs & Intermediate Files
+# ====================================================================
+.cxx/
+**/.cxx/
+.externalNativeBuild/
+cmake-build-*/
+CMakeCache.txt
+CMakeFiles/
+*.o
+*.obj
+*.so
+*.a
+*.dylib
+*.dll
+*.exe
+*.d
+*.dwo
+
+# ====================================================================
+# Android Studio, IDEs, Editors & Metadata
 # ====================================================================
 .idea/
 *.iml
-.cxx/
-local.properties
-captures/
-.externalNativeBuild/
+*.ipr
+*.iws
+.vscode/
+.gemini/
+.pi/
+.claude/
+*.swp
+*~
+*.bak
+.sublime-*
 
 # ====================================================================
-# Logs & Temporals
+# Local Configuration, Secrets & Credentials
+# ====================================================================
+local.properties
+*.keystore
+*.jks
+*.key
+*.pem
+*.env
+.env.*
+captures/
+
+# ====================================================================
+# Logs, Dumps & Temp Files
 # ====================================================================
 *.log
 *.tmp
-*.bak
 error.log
+*.hprof
+*.dump
 assets/huggingface/
 
 # ====================================================================
-# OS Specifics
+# OS & System Specifics
 # ====================================================================
 .DS_Store
 Thumbs.db
+desktop.ini
+*.directory
 
 # ====================================================================
-# AI & Local LLM Weights (Prevenir subir modelos pesados a Git)
+# AI Models, Weights & Datasets (Archivos pesados)
 # ====================================================================
 *.gguf
 *.bin
@@ -45,14 +86,54 @@ Thumbs.db
 *.litertlm
 *.safetensors
 *.onnx
+*.pt
+*.pth
+*.ckpt
+*.weights
+*.h5
+*.pb
 *.jpynb
 *.ipynb
 jupyternb/
 
 # ====================================================================
-# Binarios y comprimidos descartados
+# Multimedia no-código (Audio, Video)
 # ====================================================================
+*.mp4
+*.mp3
+*.wav
+*.ogg
+*.flac
+*.m4a
+*.avi
+*.mov
+*.webm
+*.mkv
+
+# ====================================================================
+# Binarios, Archivos Comprimidos & Paquetes
+# ====================================================================
+*.zip
+*.tar
+*.tar.gz
+*.tgz
+*.gz
+*.7z
+*.rar
+*.bz2
+*.xz
 Kofu_Assistant/Source code.tar.gz
 Kofu_Assistant/Source code.zip
-Kofu_Assistant/Kofu_Release.md5sum
+Kofu_Release.md5sum
 **/jniLibs/**/libproot.so
+
+# ====================================================================
+# Python & Node Runtime / Tool Caches
+# ====================================================================
+__pycache__/
+*.py[cod]
+*.pyo
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+node_modules/

@@ -113,10 +113,10 @@ object LlamaRepository {
             id = "kofu-gemma4",
             name = "Kofu 4.0 Edge (Gemma 4 E4B)",
             shortName = "Gemma 4",
-            description = "Última arquitectura Gemma 4 con 42 capas, alta capacidad de razonamiento lógico, código y ciberseguridad.",
+            description = "Última arquitectura Gemma con alta capacidad de razonamiento lógico, código y ciberseguridad.",
             fileName = "kofu-gemma4-edge-q4_k_m.gguf",
             downloadUrl = "https://huggingface.co/shebxyd/kofu-gemma4-edge/resolve/main/kofu-gemma4-edge-q4_k_m.gguf",
-            sizeLabel = "~3.2 GB",
+            sizeLabel = "~5.3 GB",
             isGemma4 = true,
             isRecommended = true
         ),
@@ -127,7 +127,7 @@ object LlamaRepository {
             description = "Modelo ultraligero y de respuesta inmediata basado en Gemma 2 2B.",
             fileName = "kofu-v2-edge-q4_k_m.gguf",
             downloadUrl = "https://huggingface.co/shebxyd/kofu-v2-edge/resolve/main/kofu-v2-edge-q4_k_m.gguf",
-            sizeLabel = "~1.6 GB",
+            sizeLabel = "~1.7 GB",
             isGemma4 = false,
             isRecommended = false
         )
@@ -474,9 +474,9 @@ object LlamaRepository {
     fun downloadModel(
         context: Context,
         modelOption: ModelOption,
-        onProgress: (Float) -> Unit,
-        onComplete: (Uri) -> Unit,
-        onError: (String) -> Unit
+        onProgress: (Float) -> Unit = {},
+        onComplete: (Uri) -> Unit = {},
+        onError: (String) -> Unit = {}
     ) {
         val externalDir = context.getExternalFilesDir(null)
         if (externalDir == null) {
@@ -487,34 +487,23 @@ object LlamaRepository {
         val localFile = File(externalDir, modelOption.fileName)
         if (localFile.exists() && localFile.length() > 50L * 1024L * 1024L) {
             onComplete(Uri.fromFile(localFile))
+            loadModel(context, Uri.fromFile(localFile), CoroutineScope(Dispatchers.Main))
             return
         }
 
-        CoroutineScope(Dispatchers.IO).launch {
-            val client = OkHttpClient.Builder()
-                .connectTimeout(30, TimeUnit.SECONDS)
-                .readTimeout(180, TimeUnit.SECONDS)
-                .writeTimeout(60, TimeUnit.SECONDS)
-                .build()
-
-            val success = tryDownloadFileWithResume(client, modelOption.downloadUrl, localFile, onProgress)
-            if (success && localFile.length() > 1024L) {
-                withContext(Dispatchers.Main) {
-                    onComplete(Uri.fromFile(localFile))
-                }
-            } else {
-                withContext(Dispatchers.Main) {
-                    onError("No se pudo descargar el modelo ${modelOption.shortName}")
-                }
-            }
-        }
+        com.kofu.assistant.service.ModelDownloadService.startDownload(
+            context = context,
+            url = modelOption.downloadUrl,
+            fileName = modelOption.fileName,
+            modelName = modelOption.name
+        )
     }
 
     fun downloadDefaultModel(
         context: Context,
-        onProgress: (Float) -> Unit,
-        onComplete: (Uri) -> Unit,
-        onError: (String) -> Unit
+        onProgress: (Float) -> Unit = {},
+        onComplete: (Uri) -> Unit = {},
+        onError: (String) -> Unit = {}
     ) {
         val externalDir = context.getExternalFilesDir(null)
         if (externalDir == null) {
@@ -522,28 +511,30 @@ object LlamaRepository {
             return
         }
 
-        // 1. Comprobar si el modelo seleccionado ya existe localmente
         val selectedFile = getLocalModelFile(context, selectedModel)
         if (selectedFile != null) {
             onComplete(Uri.fromFile(selectedFile))
+            loadModel(context, Uri.fromFile(selectedFile), CoroutineScope(Dispatchers.Main))
             return
         }
 
-        // 2. Comprobar si existe cualquier otro modelo oficial localmente
         for (m in AVAILABLE_MODELS) {
             val local = getLocalModelFile(context, m)
             if (local != null) {
                 selectedModel = m
                 onComplete(Uri.fromFile(local))
+                loadModel(context, Uri.fromFile(local), CoroutineScope(Dispatchers.Main))
                 return
             }
         }
 
-        // 3. Descargar el modelo seleccionado
         downloadModel(context, selectedModel, onProgress, onComplete, onError)
     }
 
-    fun cancelDownload() {
+    fun cancelDownload(context: Context? = null) {
+        context?.let {
+            com.kofu.assistant.service.ModelDownloadService.cancelDownload(it)
+        }
         downloadJob?.cancel()
         downloadJob = null
         isDownloadingModel = false
@@ -552,7 +543,7 @@ object LlamaRepository {
 
     /**
      * Inicia automáticamente la comprobación y descarga por defecto del modelo desde Hugging Face
-     * si no existe un modelo local cargado previamente.
+     * mediante Foreground Service persistente si no existe un modelo local cargado previamente.
      */
     fun startAutoDownloadIfNeeded(context: Context, scope: CoroutineScope) {
         val externalDir = context.getExternalFilesDir(null) ?: return
@@ -581,46 +572,21 @@ object LlamaRepository {
             }
         }
 
-        // 4. Si no existe ninguno, iniciar descarga automática por defecto desde Hugging Face
+        // 4. Si no existe ninguno, iniciar descarga en Foreground Service con notificación persistente
         if (isDownloadingModel) return
 
-        Log.i(TAG, "Iniciando descarga automática por defecto de ${selectedModel.name} desde Hugging Face...")
-        isDownloadingModel = true
-        downloadProgress = 0f
-        downloadStatusText = "Conectando con Hugging Face..."
+        Log.i(TAG, "Iniciando descarga en Foreground Service de ${selectedModel.name} desde Hugging Face...")
+        com.kofu.assistant.service.ModelDownloadService.startDownload(
+            context = context,
+            url = selectedModel.downloadUrl,
+            fileName = selectedModel.fileName,
+            modelName = selectedModel.name
+        )
+    }
 
-        downloadJob = CoroutineScope(Dispatchers.IO).launch {
-            val client = OkHttpClient.Builder()
-                .connectTimeout(30, TimeUnit.SECONDS)
-                .readTimeout(180, TimeUnit.SECONDS)
-                .writeTimeout(60, TimeUnit.SECONDS)
-                .followRedirects(true)
-                .followSslRedirects(true)
-                .build()
-
-            val targetFile = File(externalDir, selectedModel.fileName)
-            val success = tryDownloadFileWithResume(
-                client = client,
-                url = selectedModel.downloadUrl,
-                targetFile = targetFile,
-                onProgress = { p ->
-                    downloadProgress = p
-                    downloadStatusText = "Descargando ${selectedModel.shortName} (${(p * 100).toInt()}%)"
-                }
-            )
-
-            withContext(Dispatchers.Main) {
-                isDownloadingModel = false
-                if (success && targetFile.length() > 50L * 1024L * 1024L) {
-                    downloadStatusText = "Descarga completada"
-                    Log.i(TAG, "Descarga completada con éxito. Cargando modelo...")
-                    loadModel(context, Uri.fromFile(targetFile), scope)
-                } else {
-                    downloadStatusText = "Descarga pendiente"
-                    Log.w(TAG, "No se completó la descarga del modelo ${selectedModel.shortName}")
-                }
-            }
-        }
+    fun onDownloadedModelReady(context: Context, targetFile: File) {
+        Log.i(TAG, "Modelo descargado por Foreground Service: ${targetFile.name}. Cargando en C++...")
+        loadModel(context, Uri.fromFile(targetFile), CoroutineScope(Dispatchers.Main))
     }
 
     private suspend fun tryDownloadFileWithResume(
