@@ -380,15 +380,20 @@ fun ChatScreen(
                     onOpenSettings = { showSettingsDialog = true }
                 )
 
-                // INDICADOR DE DESCARGA EN SEGUNDO PLANO (FOREGROUND SERVICE)
-                if (repository.isDownloadingModel) {
+                // INDICADOR DE DESCARGA EN SEGUNDO PLANO O PAUSADA/INTERRUMPIDA
+                val isDownloading = repository.isDownloadingModel
+                val isPaused = repository.isDownloadPaused || (repository.getPartialModelFile(context) != null && !repository.isModelLoaded)
+                if (isDownloading || isPaused) {
                     Surface(
                         color = colors.surfaceVariant,
                         modifier = Modifier
                             .fillMaxWidth()
                             .padding(horizontal = 12.dp, vertical = 4.dp),
                         shape = KofuDesignSystem.CardShape,
-                        border = androidx.compose.foundation.BorderStroke(1.dp, colors.divider)
+                        border = androidx.compose.foundation.BorderStroke(
+                            1.dp,
+                            if (isPaused && !isDownloading) colors.accent.copy(alpha = 0.5f) else colors.divider
+                        )
                     ) {
                         Column(
                             modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
@@ -400,14 +405,20 @@ fun ChatScreen(
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
                                 Text(
-                                    text = repository.downloadStatusText.ifBlank { "Descargando modelo en segundo plano..." },
+                                    text = repository.downloadStatusText.ifBlank {
+                                        if (isDownloading) "Descargando modelo en segundo plano..." else "Descarga en pausa. Toca Reanudar."
+                                    },
                                     fontSize = 11.sp,
                                     fontWeight = FontWeight.SemiBold,
-                                    color = colors.onSurface
+                                    color = if (isPaused && !isDownloading) colors.accent else colors.onSurface,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                    modifier = Modifier.weight(1f, fill = false)
                                 )
+                                Spacer(modifier = Modifier.width(8.dp))
                                 Row(
                                     verticalAlignment = Alignment.CenterVertically,
-                                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
                                 ) {
                                     Text(
                                         text = "${(repository.downloadProgress * 100).toInt()}%",
@@ -416,6 +427,27 @@ fun ChatScreen(
                                         fontFamily = FontFamily.Monospace,
                                         color = colors.accent
                                     )
+                                    if (isDownloading) {
+                                        Text(
+                                            text = "Pausar",
+                                            fontSize = 10.sp,
+                                            color = colors.onSurfaceSecondary,
+                                            fontWeight = FontWeight.Bold,
+                                            modifier = Modifier.clickable {
+                                                repository.pauseDownload(context)
+                                            }
+                                        )
+                                    } else {
+                                        Text(
+                                            text = "Reanudar",
+                                            fontSize = 10.sp,
+                                            color = colors.accent,
+                                            fontWeight = FontWeight.Bold,
+                                            modifier = Modifier.clickable {
+                                                repository.resumeDownload(context)
+                                            }
+                                        )
+                                    }
                                     Text(
                                         text = "Cancelar",
                                         fontSize = 10.sp,
@@ -432,7 +464,7 @@ fun ChatScreen(
                                 modifier = Modifier
                                     .fillMaxWidth()
                                     .height(3.dp),
-                                color = colors.accent,
+                                color = if (isPaused && !isDownloading) colors.onSurfaceSecondary else colors.accent,
                                 trackColor = colors.inputBackground
                             )
                         }
@@ -1034,7 +1066,7 @@ private fun FormalHeroCard(
             ) {
                 Column {
                     Text(
-                        text = "Kofu Assistant v2.0",
+                        text = "Kofu Assistant v2.1.5",
                         fontWeight = FontWeight.Bold,
                         color = colors.onSurface,
                         fontSize = 14.sp

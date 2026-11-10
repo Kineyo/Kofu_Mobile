@@ -43,6 +43,8 @@ class ModelDownloadService : Service() {
 
         const val ACTION_START_DOWNLOAD = "com.kofu.assistant.ACTION_START_DOWNLOAD"
         const val ACTION_CANCEL_DOWNLOAD = "com.kofu.assistant.ACTION_CANCEL_DOWNLOAD"
+        const val ACTION_PAUSE_DOWNLOAD = "com.kofu.assistant.ACTION_PAUSE_DOWNLOAD"
+        const val ACTION_RESUME_DOWNLOAD = "com.kofu.assistant.ACTION_RESUME_DOWNLOAD"
 
         const val EXTRA_URL = "extra_download_url"
         const val EXTRA_FILE_NAME = "extra_file_name"
@@ -60,6 +62,17 @@ class ModelDownloadService : Service() {
             } else {
                 context.startService(intent)
             }
+        }
+
+        fun pauseDownload(context: Context) {
+            val intent = Intent(context, ModelDownloadService::class.java).apply {
+                action = ACTION_PAUSE_DOWNLOAD
+            }
+            context.startService(intent)
+        }
+
+        fun resumeDownload(context: Context, url: String, fileName: String, modelName: String) {
+            startDownload(context, url, fileName, modelName)
         }
 
         fun cancelDownload(context: Context) {
@@ -82,15 +95,21 @@ class ModelDownloadService : Service() {
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         when (intent?.action) {
-            ACTION_START_DOWNLOAD -> {
-                val url = intent.getStringExtra(EXTRA_URL) ?: ""
-                val fileName = intent.getStringExtra(EXTRA_FILE_NAME) ?: "model.gguf"
-                val modelName = intent.getStringExtra(EXTRA_MODEL_NAME) ?: "Modelo Kofu"
+            ACTION_START_DOWNLOAD, ACTION_RESUME_DOWNLOAD -> {
+                val url = intent.getStringExtra(EXTRA_URL)
+                    ?: LlamaRepository.currentDownloadingUrl.ifBlank { LlamaRepository.selectedModel.downloadUrl }
+                val fileName = intent.getStringExtra(EXTRA_FILE_NAME)
+                    ?: LlamaRepository.currentDownloadingFileName.ifBlank { LlamaRepository.selectedModel.fileName }
+                val modelName = intent.getStringExtra(EXTRA_MODEL_NAME)
+                    ?: LlamaRepository.currentDownloadingModelName.ifBlank { LlamaRepository.selectedModel.name }
 
                 if (url.isNotBlank()) {
-                    startForegroundNotification(modelName, 0)
+                    startForegroundNotification(modelName, (LlamaRepository.downloadProgress * 100).toInt())
                     startDownloadProcess(url, fileName, modelName)
                 }
+            }
+            ACTION_PAUSE_DOWNLOAD -> {
+                pauseDownloadProcess()
             }
             ACTION_CANCEL_DOWNLOAD -> {
                 cancelDownloadProcess()
@@ -124,6 +143,16 @@ class ModelDownloadService : Service() {
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
 
+        val pauseIntent = Intent(this, ModelDownloadService::class.java).apply {
+            action = ACTION_PAUSE_DOWNLOAD
+        }
+        val pausePendingIntent = PendingIntent.getService(
+            this,
+            2,
+            pauseIntent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+
         val cancelIntent = Intent(this, ModelDownloadService::class.java).apply {
             action = ACTION_CANCEL_DOWNLOAD
         }
@@ -142,6 +171,7 @@ class ModelDownloadService : Service() {
             .setOnlyAlertOnce(true)
             .setContentIntent(pendingIntent)
             .setProgress(100, progress, isIndeterminate)
+            .addAction(android.R.drawable.ic_media_pause, "Pausar", pausePendingIntent)
             .addAction(android.R.drawable.ic_menu_close_clear_cancel, "Cancelar", cancelPendingIntent)
             .build()
     }
@@ -182,8 +212,10 @@ class ModelDownloadService : Service() {
         }
 
         LlamaRepository.isDownloadingModel = true
-        LlamaRepository.downloadProgress = 0f
-        LlamaRepository.downloadStatusText = "Conectando con Hugging Face..."
+        LlamaRepository.isDownloadPaused = false
+        LlamaRepository.currentDownloadingUrl = url
+        LlamaRepository.currentDownloadingFileName = safeFileName
+        LlamaRepository.currentDownloadingModelName = modelName
 
         val externalDir = getExternalFilesDir(null)
         if (externalDir == null) {
@@ -195,6 +227,17 @@ class ModelDownloadService : Service() {
         if (!targetFile.canonicalPath.startsWith(externalDir.canonicalPath)) {
             notifyError("Ruta de archivo no permitida (Path Traversal)")
             return
+        }
+
+        val existingLen = if (targetFile.exists()) targetFile.length() else 0L
+        val expectedMin = LlamaRepository.getExpectedMinSize(LlamaRepository.selectedModel)
+        if (existingLen > 0 && expectedMin > 0) {
+            val initialPct = ((existingLen * 100) / expectedMin).toInt().coerceIn(0, 99)
+            LlamaRepository.downloadProgress = initialPct / 100f
+            LlamaRepository.downloadStatusText = "Reanudando $modelName ($initialPct%)..."
+        } else {
+            LlamaRepository.downloadProgress = 0f
+            LlamaRepository.downloadStatusText = "Conectando con Hugging Face..."
         }
 
         downloadJob = serviceScope.launch {
@@ -297,6 +340,7 @@ class ModelDownloadService : Service() {
     private suspend fun onDownloadSuccess(targetFile: File, modelName: String) {
         withContext(Dispatchers.Main) {
             LlamaRepository.isDownloadingModel = false
+            LlamaRepository.isDownloadPaused = false
             LlamaRepository.downloadProgress = 1.0f
             LlamaRepository.downloadStatusText = "Descarga completada"
 
@@ -318,11 +362,72 @@ class ModelDownloadService : Service() {
         }
     }
 
+    private fun pauseDownloadProcess() {
+        downloadJob?.cancel()
+        downloadJob = null
+
+        val currentModel = LlamaRepository.currentDownloadingModelName.ifBlank { "Modelo Kofu" }
+        val currentPercent = (LlamaRepository.downloadProgress * 100).toInt()
+
+        LlamaRepository.isDownloadingModel = false
+        LlamaRepository.isDownloadPaused = true
+        LlamaRepository.downloadStatusText = "Descarga pausada ($currentPercent%)"
+
+        val openAppIntent = Intent(this, MainActivity::class.java).apply {
+            flags = Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP
+        }
+        val pendingIntent = PendingIntent.getActivity(
+            this,
+            0,
+            openAppIntent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+
+        val resumeIntent = Intent(this, ModelDownloadService::class.java).apply {
+            action = ACTION_RESUME_DOWNLOAD
+        }
+        val resumePendingIntent = PendingIntent.getService(
+            this,
+            3,
+            resumeIntent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+
+        val cancelIntent = Intent(this, ModelDownloadService::class.java).apply {
+            action = ACTION_CANCEL_DOWNLOAD
+        }
+        val cancelPendingIntent = PendingIntent.getService(
+            this,
+            1,
+            cancelIntent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+
+        val pausedNotification = NotificationCompat.Builder(this, CHANNEL_ID)
+            .setContentTitle("Descarga en pausa: $currentModel")
+            .setContentText("$currentPercent% descargado. Toca Reanudar para continuar.")
+            .setSmallIcon(android.R.drawable.stat_sys_download)
+            .setOngoing(false)
+            .setAutoCancel(true)
+            .setContentIntent(pendingIntent)
+            .setProgress(100, currentPercent, false)
+            .addAction(android.R.drawable.ic_media_play, "Reanudar", resumePendingIntent)
+            .addAction(android.R.drawable.ic_menu_close_clear_cancel, "Cancelar", cancelPendingIntent)
+            .build()
+
+        notificationManager.notify(NOTIFICATION_ID, pausedNotification)
+
+        stopForeground(STOP_FOREGROUND_DETACH)
+        stopSelf()
+    }
+
     private fun cancelDownloadProcess() {
         downloadJob?.cancel()
         downloadJob = null
 
         LlamaRepository.isDownloadingModel = false
+        LlamaRepository.isDownloadPaused = false
+        LlamaRepository.downloadProgress = 0f
         LlamaRepository.downloadStatusText = "Descarga cancelada"
 
         stopForeground(STOP_FOREGROUND_REMOVE)
@@ -330,20 +435,61 @@ class ModelDownloadService : Service() {
     }
 
     private fun notifyError(errorMsg: String) {
+        downloadJob?.cancel()
+        downloadJob = null
+
+        val currentModel = LlamaRepository.currentDownloadingModelName.ifBlank { "Modelo Kofu" }
+        val currentPercent = (LlamaRepository.downloadProgress * 100).toInt()
+
         LlamaRepository.isDownloadingModel = false
-        LlamaRepository.downloadStatusText = errorMsg
+        LlamaRepository.isDownloadPaused = true
+        LlamaRepository.downloadStatusText = "Descarga interrumpida: $errorMsg. Toca Reanudar."
+
+        val openAppIntent = Intent(this, MainActivity::class.java).apply {
+            flags = Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP
+        }
+        val pendingIntent = PendingIntent.getActivity(
+            this,
+            0,
+            openAppIntent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+
+        val resumeIntent = Intent(this, ModelDownloadService::class.java).apply {
+            action = ACTION_RESUME_DOWNLOAD
+        }
+        val resumePendingIntent = PendingIntent.getService(
+            this,
+            3,
+            resumeIntent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+
+        val cancelIntent = Intent(this, ModelDownloadService::class.java).apply {
+            action = ACTION_CANCEL_DOWNLOAD
+        }
+        val cancelPendingIntent = PendingIntent.getService(
+            this,
+            1,
+            cancelIntent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
 
         val errorNotification = NotificationCompat.Builder(this, CHANNEL_ID)
-            .setContentTitle("Descarga interrumpida")
-            .setContentText(errorMsg)
+            .setContentTitle("Descarga interrumpida ($currentModel)")
+            .setContentText("Sin conexión a internet o error de red. Toca Reanudar.")
             .setSmallIcon(android.R.drawable.stat_notify_error)
             .setAutoCancel(true)
             .setOngoing(false)
+            .setContentIntent(pendingIntent)
+            .setProgress(100, currentPercent, false)
+            .addAction(android.R.drawable.ic_media_play, "Reanudar", resumePendingIntent)
+            .addAction(android.R.drawable.ic_menu_close_clear_cancel, "Cancelar", cancelPendingIntent)
             .build()
 
         notificationManager.notify(NOTIFICATION_ID, errorNotification)
 
-        stopForeground(STOP_FOREGROUND_REMOVE)
+        stopForeground(STOP_FOREGROUND_DETACH)
         stopSelf()
     }
 

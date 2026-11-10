@@ -30,8 +30,8 @@ sealed class UpdateCheckResult {
 
 object AppUpdateManager {
     private const val TAG = "AppUpdateManager"
-    const val CURRENT_VERSION_NAME = "2.1.0"
-    const val CURRENT_VERSION_TAG = "2.1"
+    const val CURRENT_VERSION_NAME = "2.1.5"
+    const val CURRENT_VERSION_TAG = "2.1.5"
     private const val GITHUB_RELEASES_URL = "https://api.github.com/repos/Kineyo/Kofu_Mobile/releases"
 
     private val httpClient = OkHttpClient.Builder()

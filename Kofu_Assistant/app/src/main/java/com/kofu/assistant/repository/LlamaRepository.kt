@@ -102,8 +102,13 @@ object LlamaRepository {
 
     // Estado de descarga automática desde Hugging Face
     var isDownloadingModel: Boolean by mutableStateOf(false)
+    var isDownloadPaused: Boolean by mutableStateOf(false)
     var downloadProgress: Float by mutableStateOf(0f)
     var downloadStatusText: String by mutableStateOf("")
+    var currentDownloadingUrl: String by mutableStateOf("")
+    var currentDownloadingFileName: String by mutableStateOf("")
+    var currentDownloadingModelName: String by mutableStateOf("")
+    var downloadTotalBytes: Long by mutableStateOf(0L)
     private var downloadJob: Job? = null
 
     val ollamaClient: OllamaClient = OllamaClient(ollamaHost)
@@ -173,6 +178,25 @@ object LlamaRepository {
         systemPrompt = prefs.getString("system_prompt", systemPrompt) ?: systemPrompt
         isDebugMode = prefs.getBoolean("debug_mode", false)
 
+        isDownloadPaused = prefs.getBoolean("download_paused", false)
+        currentDownloadingUrl = prefs.getString("download_url", "") ?: ""
+        currentDownloadingFileName = prefs.getString("download_file_name", "") ?: ""
+        currentDownloadingModelName = prefs.getString("download_model_name", "") ?: ""
+        downloadTotalBytes = prefs.getLong("download_total_bytes", 0L)
+
+        // Comprobar si existe descarga parcial en disco al iniciar la aplicación
+        val partial = getPartialModelFile(context, selectedModel)
+        if (partial != null) {
+            val expected = getExpectedMinSize(selectedModel)
+            val pct = (partial.length().toFloat() / expected).coerceIn(0f, 0.99f)
+            downloadProgress = pct
+            isDownloadPaused = true
+            downloadStatusText = "Descarga pausada (${(pct * 100).toInt()}%)"
+            currentDownloadingFileName = selectedModel.fileName
+            currentDownloadingModelName = selectedModel.name
+            currentDownloadingUrl = selectedModel.downloadUrl
+        }
+
         ollamaClient.updateBaseUrl(ollamaHost)
     }
 
@@ -188,6 +212,11 @@ object LlamaRepository {
             putInt("max_tokens", maxTokens)
             putString("system_prompt", systemPrompt)
             putBoolean("debug_mode", isDebugMode)
+            putBoolean("download_paused", isDownloadPaused)
+            putString("download_url", currentDownloadingUrl)
+            putString("download_file_name", currentDownloadingFileName)
+            putString("download_model_name", currentDownloadingModelName)
+            putLong("download_total_bytes", downloadTotalBytes)
             apply()
         }
         ollamaClient.updateBaseUrl(ollamaHost)
@@ -488,16 +517,32 @@ object LlamaRepository {
         KofuNativeEngine.nativeCancelGeneration()
     }
 
+    fun getExpectedMinSize(modelOption: ModelOption): Long {
+        return when (modelOption.id) {
+            "kofu-2b" -> 1_200_000_000L // ~1.4 GB
+            "kofu-gemma4" -> 4_500_000_000L // ~5.3 GB
+            else -> 1_400_000_000L // ~1.6 GB para kofu-v2
+        }
+    }
+
     fun isModelDownloaded(context: Context, modelOption: ModelOption): Boolean {
         val externalDir = context.getExternalFilesDir(null) ?: return false
         val file = File(externalDir, modelOption.fileName)
-        return file.exists() && file.length() > 50L * 1024L * 1024L
+        return file.exists() && file.length() >= getExpectedMinSize(modelOption)
     }
 
     fun getLocalModelFile(context: Context, modelOption: ModelOption): File? {
         val externalDir = context.getExternalFilesDir(null) ?: return null
         val file = File(externalDir, modelOption.fileName)
-        return if (file.exists() && file.length() > 50L * 1024L * 1024L) file else null
+        return if (file.exists() && file.length() >= getExpectedMinSize(modelOption)) file else null
+    }
+
+    fun getPartialModelFile(context: Context, modelOption: ModelOption = selectedModel): File? {
+        val externalDir = context.getExternalFilesDir(null) ?: return null
+        val targetName = currentDownloadingFileName.ifBlank { modelOption.fileName }
+        val file = File(externalDir, targetName)
+        val expected = getExpectedMinSize(modelOption)
+        return if (file.exists() && file.length() > 0 && file.length() < expected && !isModelLoaded) file else null
     }
 
     fun switchModel(
@@ -529,12 +574,18 @@ object LlamaRepository {
         }
 
         val localFile = File(externalDir, modelOption.fileName)
-        if (localFile.exists() && localFile.length() > 50L * 1024L * 1024L) {
+        if (localFile.exists() && localFile.length() >= getExpectedMinSize(modelOption)) {
             onProgress(1f)
             onComplete(Uri.fromFile(localFile))
             loadModel(context, Uri.fromFile(localFile), CoroutineScope(Dispatchers.Main))
             return
         }
+
+        currentDownloadingUrl = modelOption.downloadUrl
+        currentDownloadingFileName = modelOption.fileName
+        currentDownloadingModelName = modelOption.name
+        isDownloadingModel = true
+        isDownloadPaused = false
 
         com.kofu.assistant.service.ModelDownloadService.startDownload(
             context = context,
@@ -576,13 +627,44 @@ object LlamaRepository {
         downloadModel(context, selectedModel, onProgress, onComplete, onError)
     }
 
+    fun pauseDownload(context: Context) {
+        com.kofu.assistant.service.ModelDownloadService.pauseDownload(context)
+        isDownloadingModel = false
+        isDownloadPaused = true
+        val percent = (downloadProgress * 100).toInt()
+        downloadStatusText = "Descarga pausada ($percent%)"
+        savePreferences(context)
+    }
+
+    fun resumeDownload(context: Context) {
+        val modelToDownload = AVAILABLE_MODELS.find { it.fileName == currentDownloadingFileName } ?: selectedModel
+        selectedModel = modelToDownload
+        isDownloadingModel = true
+        isDownloadPaused = false
+        val url = currentDownloadingUrl.ifBlank { modelToDownload.downloadUrl }
+        val fileName = currentDownloadingFileName.ifBlank { modelToDownload.fileName }
+        val modelName = currentDownloadingModelName.ifBlank { modelToDownload.name }
+        downloadStatusText = "Reanudando descarga..."
+        com.kofu.assistant.service.ModelDownloadService.startDownload(context, url, fileName, modelName)
+    }
+
     fun cancelDownload(context: Context? = null) {
-        context?.let {
-            com.kofu.assistant.service.ModelDownloadService.cancelDownload(it)
+        context?.let { ctx ->
+            com.kofu.assistant.service.ModelDownloadService.cancelDownload(ctx)
+            val externalDir = ctx.getExternalFilesDir(null)
+            if (externalDir != null) {
+                val targetName = currentDownloadingFileName.ifBlank { selectedModel.fileName }
+                val partialFile = File(externalDir, targetName)
+                if (partialFile.exists() && !isModelLoaded) {
+                    partialFile.delete()
+                }
+            }
         }
         downloadJob?.cancel()
         downloadJob = null
         isDownloadingModel = false
+        isDownloadPaused = false
+        downloadProgress = 0f
         downloadStatusText = "Descarga cancelada"
     }
 
@@ -615,8 +697,8 @@ object LlamaRepository {
             }
         }
 
-        // 4. Si no existe ninguno, iniciar descarga en Foreground Service con notificación persistente
-        if (isDownloadingModel) return
+        // 4. Si ya está descargando o está en pausa por el usuario / red, no reiniciar automáticamente
+        if (isDownloadingModel || isDownloadPaused) return
 
         Log.i(TAG, "Iniciando descarga en Foreground Service de ${selectedModel.name} desde Hugging Face...")
         com.kofu.assistant.service.ModelDownloadService.startDownload(

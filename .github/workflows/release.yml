@@ -52,17 +52,20 @@ jobs:
       - name: Organize Release Artifacts
         run: |
           mkdir -p build-artifacts
+          VERSION_TAG="${GITHUB_REF_NAME:-v2.1.5}"
           
           # Copiar APK Release (firmado con debug keystore para instalación directa)
           if [ -f Kofu_Assistant/app/build/outputs/apk/release/app-release.apk ]; then
-            cp Kofu_Assistant/app/build/outputs/apk/release/app-release.apk build-artifacts/Kofu_Assistant-v2.1.0-arm64-v8a-release.apk
+            cp Kofu_Assistant/app/build/outputs/apk/release/app-release.apk "build-artifacts/Kofu_Assistant-${VERSION_TAG}-arm64-v8a-release.apk"
+            cp Kofu_Assistant/app/build/outputs/apk/release/app-release.apk build-artifacts/app-release.apk
           elif [ -f Kofu_Assistant/app/build/outputs/apk/release/app-release-unsigned.apk ]; then
-            cp Kofu_Assistant/app/build/outputs/apk/release/app-release-unsigned.apk build-artifacts/Kofu_Assistant-v2.1.0-arm64-v8a-release.apk
+            cp Kofu_Assistant/app/build/outputs/apk/release/app-release-unsigned.apk "build-artifacts/Kofu_Assistant-${VERSION_TAG}-arm64-v8a-release.apk"
+            cp Kofu_Assistant/app/build/outputs/apk/release/app-release-unsigned.apk build-artifacts/app-release.apk
           fi
 
           # Copiar APK Debug oficial
           if [ -f Kofu_Assistant/app/build/outputs/apk/debug/app-debug.apk ]; then
-            cp Kofu_Assistant/app/build/outputs/apk/debug/app-debug.apk build-artifacts/Kofu_Assistant-v2.1.0-arm64-v8a-debug.apk
+            cp Kofu_Assistant/app/build/outputs/apk/debug/app-debug.apk "build-artifacts/Kofu_Assistant-${VERSION_TAG}-arm64-v8a-debug.apk"
             cp Kofu_Assistant/app/build/outputs/apk/debug/app-debug.apk build-artifacts/app-debug.apk
           fi
 

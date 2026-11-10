@@ -6,7 +6,7 @@
 
 <p align="center">
   <a href="https://huggingface.co/shebxyd/kofu-v2-edge"><img src="https://img.shields.io/badge/🤗%20Hugging%20Face-shebxyd%2Fkofu--v2--edge-yellow?style=for-the-badge" alt="Hugging Face Model"></a>
-  <img src="https://img.shields.io/badge/Version-v2.1%20%5BEstable%5D-brightgreen?style=for-the-badge" alt="Version 2.1">
+  <img src="https://img.shields.io/badge/Version-v2.1.5%20%5BEstable%5D-brightgreen?style=for-the-badge" alt="Version 2.1.5">
   <img src="https://img.shields.io/badge/Backend-C%2B%2B20%20NDK%20r26-00599C?style=for-the-badge&logo=cplusplus&logoColor=white" alt="C++20 NDK">
   <img src="https://img.shields.io/badge/UI-Jetpack%20Compose-4285F4?style=for-the-badge&logo=jetpackcompose&logoColor=white" alt="Jetpack Compose">
   <img src="https://img.shields.io/badge/Android-8.0%2B-3DDC84?style=for-the-badge&logo=android&logoColor=white" alt="Android">
