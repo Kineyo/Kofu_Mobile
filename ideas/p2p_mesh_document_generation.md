@@ -192,7 +192,96 @@ Cuando varios modelos independientes redactan secciones simultáneas, existe el 
 
 ---
 
-## 💼 6. Estrategia Comercial y Adquisición de Beta Testers (Licencia MIT)
+## 📑 6. Motor Ofimático Nativo y Centro de Plantillas OpenXML (.dotx / .potx)
+
+Para evitar la generación exclusiva de texto plano (`.txt`), Kofu integra un subsistema de formateo ofimático profesional basado en las **plantillas oficiales del repositorio padre** (`Kineyo/Proyecto_Kofu/tree/plantillas`), prescindiendo de herramientas externas pesadas (como OfficeCLI en C#/.NET o Apache POI).
+
+### 🏛️ Reutilización de Plantillas Oficiales del Ecosistema Kofu
+
+La rama `plantillas` del repositorio padre contiene 11 paquetes temáticos con más de 66 plantillas maestras en formatos OpenXML (`.dotx` para Word y `.potx` para PowerPoint):
+
+```
++-------------------------------------------------------------------------+
+|                  PAQUETES OFICIALES DE PLANTILLAS KOFU                  |
++-------------------+--------------------+--------------------------------+
+| Paquete           | Formatos           | Usos Principales               |
++-------------------+--------------------+--------------------------------+
+| 🎓 APA 7ma Ed.    | .dotx / .potx      | Tesis, Ensayos, Artículos      |
+| 🏛️ Institucional   | .dotx / .potx      | Oficios, Memorándums, Actas    |
+| ✨ Minimalista     | .dotx / .potx      | Cartas, Propuestas, Portafolio |
+| 💼 Corporativo    | .dotx / .potx      | Business Plans, Minutas, NDAs  |
+| ⚡ Startups & AI   | .dotx / .potx      | Arquitectura RFC, Pitch Decks  |
+| ⚖️ Jurídico/Legal  | .dotx / .potx      | Contratos, Poderes, Convenios  |
+| 📊 Gestión Ágil   | .dotx / .potx      | Retrospectivas, Project Charter|
+| 📈 Marketing      | .dotx / .potx      | Briefs, Planes de Lanzamiento  |
+| 📚 Educación      | .dotx / .potx      | Syllabi, Rúbricas Didácticas   |
+| 🎨 Editorial      | .dotx / .potx      | Guiones, Dossiers de Prensa    |
+| 👥 Rec. Humanos   | .dotx / .potx      | Onboarding, Perfiles de Puesto |
++-------------------+--------------------+--------------------------------+
+```
+
+### 📦 Centro de Plantillas en la Interfaz (UI Jetpack Compose)
+
+En la interfaz de Kofu Mobile se añade una sección o diálogo modal **"📦 Centro de Plantillas"**:
+
+```
+[UI Kofu: Centro de Plantillas]
+  │
+  ├─ 1. Consulta catálogo JSON remoto:
+  │     https://raw.githubusercontent.com/Kineyo/Proyecto_Kofu/plantillas/packages/templates_catalog.json
+  │
+  ├─ 2. Usuario selecciona categoría (ej. "🎓 APA 7ma Edición")
+  │     y presiona "Descargar e Instalar".
+  │
+  └─ 3. Descarga y Descompresión al Vuelo (En Segundo Plano):
+        ┌─────────────────────────────────────────────────────────────┐
+        │ URL: raw.githubusercontent.com/.../Plantillas%20APA%207.zip │
+        │                          │ (Stream HTTP con OkHttp)         │
+        │                          ▼                                  │
+        │          java.util.zip.ZipInputStream                       │
+        │  (Descomprime directamente en memoria sin guardar el .zip)  │
+        │                          │                                  │
+        │                          ▼                                  │
+        │   Guarda archivos limpios directamente en:                  │
+        │   - /data/user/0/.../templates/word/*.dotx                  │
+        │   - /data/user/0/.../templates/powerpoint/*.potx            │
+        │                          │                                  │
+        │     ✅ Registro automático en catálogo local                │
+        │     🗑️ Cero archivos .zip residuales en el almacenamiento    │
+        └─────────────────────────────────────────────────────────────┘
+```
+
+### ⚡ Transformación e Inyección Nativa (.dotx a .docx) sin Runtimes Externos
+
+Para transformar una plantilla `.dotx` descargada en un archivo `.docx` editable con el contenido generado por Kofu, se utilizan **exclusivamente librerías nativas de Android / Java (`java.util.zip`)**:
+
+```
+[Plantilla .dotx (30 KB)]
+         │
+         ▼  (Lectura con ZipInputStream)
+1. Modificación de Tipo de Contenido:
+   En "[Content_Types].xml", se reemplaza:
+   "template.main+xml" ──> "document.main+xml"
+         │
+         ▼
+2. Inyección de Estructura de Texto:
+   En "word/document.xml", se inyectan los párrafos, títulos, listas
+   y tablas generados por Kofu, mapeándolos a los estilos nativos
+   preexistentes en la plantilla ("Heading 1", "Heading 2", "Normal", "Table").
+         │
+         ▼  (Escritura con ZipOutputStream)
+[Archivo Final .docx Listo para Compartir / Abrir]
+```
+
+* **Ventajas de la Técnica Nativa:**
+  * **Cero Megabytes Extra:** No requiere .NET, OfficeCLI, Mono ni Apache POI.
+  * **Velocidad Extrema:** La transformación y reempaquetado toma menos de **30 milisegundos** en cualquier CPU móvil.
+  * **Fidelidad Visual Profesional:** Al abrir el archivo en Word o Google Docs, conserva la tipografía, márgenes, colores corporativos y sangrías oficiales de la plantilla.
+  * **Exportación Inmediata:** Integración con `FileProvider` y `Intent.ACTION_SEND` de Android para abrir el documento generado en Microsoft 365, Google Docs o enviarlo por correo/WhatsApp.
+
+---
+
+## 💼 7. Estrategia Comercial y Adquisición de Beta Testers (Licencia MIT)
 
 El proyecto Kofu Mobile cuenta con licencia **MIT**, lo que representa una fortaleza para la adopción masiva y no impide generar ingresos recurrentes ni construir un negocio sostenible.
 
@@ -236,7 +325,7 @@ El proyecto Kofu Mobile cuenta con licencia **MIT**, lo que representa una forta
 
 ---
 
-## 💰 7. Modelos de Monetización Éticos bajo Licencia MIT
+## 💰 8. Modelos de Monetización Éticos bajo Licencia MIT
 
 ```
                              MODELOS DE MONETIZACIÓN KOFU
@@ -278,25 +367,30 @@ El proyecto Kofu Mobile cuenta con licencia **MIT**, lo que representa una forta
 
 ---
 
-## 🗺️ 8. Hoja de Ruta de Implementación (Roadmap)
+## 🗺️ 9. Hoja de Ruta de Implementación (Roadmap)
 
 ```
-[FASE 1: Cimientos de Red Nativa en C++]
+[FASE 1: Motor Ofimático y Gestor de Plantillas Nativo]
+- Diálogo modal "Centro de Plantillas" en Compose conectado a raw.githubusercontent.
+- Descarga en streaming y descompresión al vuelo con ZipInputStream nativo.
+- Conversor OpenXML (.dotx a .docx) mediante sustitución de cabecera y estructura.
+
+[FASE 2: Cimientos de Red Nativa en C++]
 - Implementación de sockets POSIX no bloqueantes y enlazador RFCOMM/BLE.
 - Esquema de mensajes binarios con Google FlatBuffers.
 - Cifrado autenticado E2E con Monocypher (ChaCha20-Poly1305).
 
-[FASE 2: Subasta y Descomposición de Tareas]
+[FASE 3: Subasta y Descomposición de Tareas]
 - Módulo de telemetría de hardware (RAM libre, térmica, batería).
 - Lógica de scoring de subasta inversa en C++20.
 - Algoritmo de fragmentación y orquestación de documentos en DAG.
 
-[FASE 3: UI en Compose y Servicio de Fondo]
+[FASE 4: UI en Compose y Servicio de Fondo]
 - Visualizador de radar de nodos cercanos en Jetpack Compose.
 - Foreground Service persistente para mantener la malla viva con pantalla apagada.
 - Banco de pruebas con 3 dispositivos reales (gama baja + gama alta).
 
-[FASE 4: Lanzamiento Público y Beta Testing]
+[FASE 5: Lanzamiento Público y Beta Testing]
 - Publicación del demo "Air-Gap" en video.
 - Lanzamiento de release pública en GitHub e IzzyOnDroid.
 - Convocatoria en Hacker News y r/LocalLLaMA.
