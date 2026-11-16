@@ -26,13 +26,13 @@ public:
 
     static std::string format_chat_prompt(
         std::string_view user_prompt,
-        std::string_view system_prompt = "Eres Kofu, un asistente de IA local útil, atento, privado y respetuoso. Responde de forma clara, precisa y concisa.",
+        std::string_view system_prompt = "Eres Aura, una asistente educativa local útil, atenta y privada. Responde de forma clara, precisa y concisa.",
         PromptStyle style = PromptStyle::GEMMA
     );
 
     static std::string format_multi_turn_prompt(
         const std::vector<ChatTurn>& turns,
-        std::string_view default_system = "Eres Kofu, un asistente de IA local útil, atento, privado y respetuoso. Responde de forma clara, precisa y concisa.",
+        std::string_view default_system = "Eres Aura, una asistente educativa local útil, atenta y privada. Responde de forma clara, precisa y concisa.",
         PromptStyle style = PromptStyle::GEMMA
     );
 };

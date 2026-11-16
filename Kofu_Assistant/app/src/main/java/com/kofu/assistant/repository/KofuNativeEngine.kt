@@ -1,6 +1,7 @@
 package com.kofu.assistant.repository
 
 import android.util.Log
+import java.nio.ByteBuffer
 
 fun interface NativeStreamCallback {
     fun onToken(token: String)
@@ -47,6 +48,27 @@ object KofuNativeEngine {
     )
     external fun nativeGetStatsJson(): String
     external fun nativeTrimMemory()
+    external fun nativeTrimMemoryLevel(level: Int)
     external fun nativeGetActiveHardwareTier(): String
     external fun nativeSetPreferredAccelerator(mode: Int)
+    external fun nativeSetLowRamBudget(enabled: Boolean, maxRssMb: Long, debugGovernor: Boolean)
+
+    // Micro-embedder GGUF y scorer NEON int8 para RAG semántico local
+    external fun nativeLoadEmbedModel(modelPath: String): Boolean
+    external fun nativeUnloadEmbedModel()
+    external fun nativeIsEmbedModelLoaded(): Boolean
+    external fun nativeGetEmbedDim(): Int
+    external fun nativeEmbedTextInt8(text: String): ByteArray?
+    external fun nativeScoreInt8Cosine(
+        queryVec: ByteArray,
+        corpusFlat: ByteArray,
+        numDocs: Int,
+        dim: Int
+    ): FloatArray?
+    external fun nativeScoreInt8CosineDirect(
+        queryVec: ByteArray,
+        corpusDirect: ByteBuffer,
+        numDocs: Int,
+        dim: Int
+    ): FloatArray?
 }

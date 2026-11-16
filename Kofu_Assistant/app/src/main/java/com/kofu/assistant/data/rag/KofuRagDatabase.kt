@@ -6,10 +6,13 @@ import android.database.sqlite.SQLiteDatabase
 import android.database.sqlite.SQLiteOpenHelper
 import android.util.Log
 import com.kofu.assistant.data.KofuEditionProfile
+import com.kofu.assistant.repository.KofuNativeEngine
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
 import java.io.InputStream
+import java.nio.ByteBuffer
+import java.security.MessageDigest
 import java.text.Normalizer
 import kotlin.math.ln
 
@@ -18,8 +21,8 @@ enum class RagDomain(val id: String, val displayName: String) {
     CS_PROGRAMMING("CS_PROGRAMMING", "Ingeniería de Software & Sistemas"),
     MATH_SCIENCE("MATH_SCIENCE", "Matemáticas & Ciencias Exactas"),
     AI_EDGE("AI_EDGE", "IA Edge & Arquitectura Snapdragon"),
-    GENERAL_FACTS_ES("GENERAL_FACTS_ES", "Conocimiento General Verificado"),
-    KOFU_SYSTEM("KOFU_SYSTEM", "Sistema & Autonomía Kofu")
+    GENERAL_FACTS_ES("GENERAL_FACTS_ES", "Español, Humanidades & Conocimiento General"),
+    KOFU_SYSTEM("KOFU_SYSTEM", "Identidad & Autonomía Aura")
 }
 
 data class RagDocument(
@@ -63,7 +66,8 @@ object DynamicDomainRouter {
 
     private val DOMAIN_TRIGGERS: Map<RagDomain, Set<String>> = mapOf(
         RagDomain.KOFU_SYSTEM to setOf(
-            "kofu", "quien eres", "modo avion", "privacidad", "offline", "autonomo",
+            "aura", "kofu", "quien eres", "como te llamas", "tu nombre", "nombre", "identidad",
+            "modo avion", "privacidad", "offline", "autonomo",
             "internet", "clima hoy", "noticias hoy", "tiempo real", "bolsa hoy", "nube"
         ),
         RagDomain.AI_EDGE to setOf(
@@ -110,7 +114,9 @@ object DynamicDomainRouter {
             "independencia", "tenochtitlan", "colon", "america", "salud", "temperatura", "corporal", "presion",
             "arterial", "frecuencia", "cardiaca", "spo2", "primeros", "auxilios", "reposo",
             "literatura", "quijote", "cervantes", "garcia", "marquez", "soledad", "rae",
-            "tilde", "agudas", "economia", "pib", "inflacion", "derechos", "humanos", "onu",
+            "tilde", "agudas", "graves", "llanas", "esdrujulas", "acentuacion", "ortografia",
+            "gramatica", "sujeto", "predicado", "verbo", "sustantivo", "adjetivo", "adverbio",
+            "metafora", "simil", "hiperbole", "espanol", "economia", "pib", "inflacion", "derechos", "humanos", "onu",
             "nutricion", "proteina", "proteinas", "carbohidrato", "carbohidratos", "lipido",
             "lipidos", "kilocalorias", "gramo", "milla", "kilometro", "kilometros", "kilogramo",
             "libra", "libras", "pulgada", "centimetros", "litro", "litros", "agua", "web"
@@ -148,14 +154,14 @@ object DynamicDomainRouter {
     fun classify(rawQuery: String): RagDomain {
         val norm = normalize(rawQuery)
         if (norm.isBlank()) return RagDomain.CHITCHAT
-        val chitchatWithoutKofu = norm.removeSuffix(" kofu").trim()
-        if (chitchatWithoutKofu in CHITCHAT_EXACT ||
-            (chitchatWithoutKofu.length <= 18 && CHITCHAT_EXACT.any {
-                chitchatWithoutKofu == it || chitchatWithoutKofu.startsWith("$it ")
+        val chitchatWithoutBrand = norm.removeSuffix(" aura").removeSuffix(" kofu").trim()
+        if (chitchatWithoutBrand in CHITCHAT_EXACT ||
+            (chitchatWithoutBrand.length <= 18 && CHITCHAT_EXACT.any {
+                chitchatWithoutBrand == it || chitchatWithoutBrand.startsWith("$it ")
             })
         ) {
-            val nonKofuTokens = tokenize(chitchatWithoutKofu).filter { it != "kofu" }
-            if (nonKofuTokens.size <= 2 && DOMAIN_TRIGGERS.values.flatten().none { it in nonKofuTokens }) {
+            val nonBrandTokens = tokenize(chitchatWithoutBrand).filter { it != "kofu" && it != "aura" }
+            if (nonBrandTokens.size <= 2 && DOMAIN_TRIGGERS.values.flatten().none { it in nonBrandTokens }) {
                 return RagDomain.CHITCHAT
             }
         }
@@ -196,12 +202,18 @@ class KofuRagDatabase private constructor(
     private val invertedIndex = mutableMapOf<String, MutableMap<Int, Int>>() // term -> (docIdx -> tf)
     private val docLengths = mutableListOf<Int>()
     private var avgDocLength: Double = 1.0
+    private var corpusVectorsDirect: ByteBuffer? = null
+    private var corpusDocIndices: IntArray = IntArray(0)
+    private var embedDim: Int = 0
     private val lock = Any()
 
     companion object {
         private const val TAG = "KofuRAG"
         private const val ASSET_PATH = "rag/kofu_knowledge_shards.json"
         private const val MAX_CONTEXT_CHARS = 480
+        private const val META_DATASET_HASH = "dataset_hash"
+        private const val RRF_K = 60.0
+        private const val MIN_SEMANTIC_COSINE = 0.25f
 
         @Volatile
         private var instance: KofuRagDatabase? = null
@@ -215,12 +227,54 @@ class KofuRagDatabase private constructor(
             }
         }
 
+        fun getInstanceOrNull(): KofuRagDatabase? = instance
+
         fun createInMemoryForTest(jsonStream: InputStream): KofuRagDatabase {
             return KofuRagDatabase(null).apply {
                 val jsonText = jsonStream.bufferedReader(Charsets.UTF_8).use { it.readText() }
                 val parsed = parseShardsJson(jsonText)
                 rebuildInMemoryIndexLocked(parsed)
             }
+        }
+
+        fun computeDocContentHash(doc: RagDocument): String {
+            val md = MessageDigest.getInstance("SHA-256")
+            md.update("${doc.title}|${doc.keywords}|${doc.content}".toByteArray(Charsets.UTF_8))
+            return md.digest().joinToString("") { "%02x".format(it) }
+        }
+
+        fun computeDatasetHash(docs: List<RagDocument>): String {
+            val md = MessageDigest.getInstance("SHA-256")
+            docs.sortedBy { it.id }.forEach { doc ->
+                md.update("${doc.id}|${doc.domain.id}|${doc.title}|${doc.keywords}|${doc.content}\n".toByteArray(Charsets.UTF_8))
+            }
+            return md.digest().joinToString("") { "%02x".format(it) }
+        }
+
+        fun computeRrfFusion(
+            bm25Ranked: List<Pair<RagDocument, Double>>,
+            semanticRanked: List<Pair<RagDocument, Float>>,
+            limit: Int,
+            k: Double = RRF_K
+        ): List<Pair<RagDocument, Double>> {
+            val rrfScores = HashMap<String, Double>()
+            val docsById = HashMap<String, RagDocument>()
+
+            bm25Ranked.take(8).forEachIndexed { rank, (doc, score) ->
+                if (score > 0.0) {
+                    docsById[doc.id] = doc
+                    rrfScores[doc.id] = (rrfScores[doc.id] ?: 0.0) + (1.0 / (k + rank + 1))
+                }
+            }
+            semanticRanked.filter { it.second >= MIN_SEMANTIC_COSINE }.take(8).forEachIndexed { rank, (doc, _) ->
+                docsById[doc.id] = doc
+                rrfScores[doc.id] = (rrfScores[doc.id] ?: 0.0) + (1.0 / (k + rank + 1))
+            }
+
+            return rrfScores.entries
+                .sortedByDescending { it.value }
+                .take(limit)
+                .mapNotNull { entry -> docsById[entry.key]?.let { it to entry.value } }
         }
     }
 
@@ -256,11 +310,80 @@ class KofuRagDatabase private constructor(
                 }
         }
 
+        val datasetHash = computeDatasetHash(loaded)
         synchronized(lock) {
-            dbHelper?.replaceDocuments(loaded)
+            val cachedHash = dbHelper?.getMeta(META_DATASET_HASH)
+            if (cachedHash != datasetHash) {
+                dbHelper?.replaceDocuments(loaded, datasetHash)
+            } else {
+                Log.i(TAG, "Hash RAG sin cambios ($datasetHash); se omite reescritura FTS4")
+            }
             rebuildInMemoryIndexLocked(loaded)
         }
         Log.i(TAG, "Base RAG SQLite FTS4 + BM25 lista con ${loaded.size} fragmentos verificados")
+    }
+
+    fun onLowMemoryTrim() {
+        synchronized(lock) {
+            corpusVectorsDirect = null
+            corpusDocIndices = IntArray(0)
+            embedDim = 0
+        }
+        Log.i(TAG, "Caché vectorial DirectBuffer liberada por presión de memoria; respaldo BM25-only activo")
+    }
+
+    /**
+     * Sincroniza embeddings int8 en SQLite y reconstruye el DirectByteBuffer contiguo
+     * fuera del heap ART (zero-copy JNI) cuando el micro-embedder GGUF nativo está cargado.
+     */
+    fun syncSemanticEmbeddings() {
+        if (!KofuNativeEngine.isNativeReady() || !KofuNativeEngine.nativeIsEmbedModelLoaded()) return
+        val activeDim = KofuNativeEngine.nativeGetEmbedDim()
+        if (activeDim <= 0) return
+
+        val docsSnapshot = synchronized(lock) { documents.toList() }
+        if (docsSnapshot.isEmpty()) return
+
+        val helper = dbHelper ?: return
+        val existing = helper.loadAllEmbeddings(activeDim)
+        val toPersist = mutableListOf<EmbeddingRow>()
+        val alignedVectors = ArrayList<Pair<Int, ByteArray>>(docsSnapshot.size)
+
+        docsSnapshot.forEachIndexed { idx, doc ->
+            val hash = computeDocContentHash(doc)
+            val cached = existing[doc.id]
+            if (cached != null && cached.contentHash == hash && cached.vector.size == activeDim) {
+                alignedVectors.add(idx to cached.vector)
+            } else {
+                val vec = KofuNativeEngine.nativeEmbedTextInt8("${doc.title}. ${doc.content}")
+                if (vec != null && vec.size == activeDim) {
+                    toPersist.add(EmbeddingRow(doc.id, activeDim, vec, hash))
+                    alignedVectors.add(idx to vec)
+                }
+            }
+        }
+
+        if (toPersist.isNotEmpty()) {
+            helper.upsertEmbeddings(toPersist)
+        }
+
+        val totalBytes = alignedVectors.size * activeDim
+        val directBuf = if (totalBytes > 0) ByteBuffer.allocateDirect(totalBytes) else null
+        val docIndices = IntArray(alignedVectors.size)
+        if (directBuf != null) {
+            alignedVectors.forEachIndexed { pos, (docIdx, vec) ->
+                directBuf.put(vec)
+                docIndices[pos] = docIdx
+            }
+            directBuf.rewind()
+        }
+
+        synchronized(lock) {
+            corpusVectorsDirect = directBuf
+            corpusDocIndices = docIndices
+            embedDim = activeDim
+        }
+        Log.i(TAG, "Embeddings semánticos int8 (DirectBuffer) listos: ${alignedVectors.size}/${docsSnapshot.size} docs (dim=$activeDim, ${totalBytes / 1024} KB)")
     }
 
     /**
@@ -272,15 +395,16 @@ class KofuRagDatabase private constructor(
             val mapById = documents.associateBy { it.id }.toMutableMap()
             newDocs.forEach { mapById[it.id] = it }
             val merged = mapById.values.toList()
-            dbHelper?.replaceDocuments(merged)
+            dbHelper?.replaceDocuments(merged, computeDatasetHash(merged))
             rebuildInMemoryIndexLocked(merged)
         }
+        syncSemanticEmbeddings()
     }
 
     fun retrieveDynamicContext(
         rawQuery: String,
-        maxChunks: Int = KofuEditionProfile.current.maxRagChunks,
-        maxContextChars: Int = KofuEditionProfile.current.maxRagContextChars
+        maxChunks: Int = KofuEditionProfile.effectiveMaxRagChunks,
+        maxContextChars: Int = KofuEditionProfile.effectiveMaxRagContextChars
     ): RagRetrievalResult {
         val startNs = System.nanoTime()
         val domain = DynamicDomainRouter.classify(rawQuery)
@@ -310,18 +434,54 @@ class KofuRagDatabase private constructor(
             )
         }
 
-        val ranked = synchronized(lock) {
-            val domainResults = scoreCandidatesLocked(queryTokens, domainFilter = domain, limit = maxChunks)
+        val useHybrid = KofuNativeEngine.isNativeReady() &&
+            KofuNativeEngine.nativeIsEmbedModelLoaded() &&
+            synchronized(lock) { corpusVectorsDirect != null && corpusDocIndices.isNotEmpty() && embedDim > 0 }
+
+        val bm25Limit = if (useHybrid) maxOf(maxChunks, 8) else maxChunks
+        val bm25Ranked = synchronized(lock) {
+            val domainResults = scoreCandidatesLocked(queryTokens, domainFilter = domain, limit = bm25Limit)
             if (domainResults.isNotEmpty() && domainResults.first().second >= 1.2) {
                 domainResults
             } else {
                 // Fallback transversal entre todos los shards si no hubo coincidencia fuerte en el primario
-                scoreCandidatesLocked(queryTokens, domainFilter = null, limit = maxChunks)
+                scoreCandidatesLocked(queryTokens, domainFilter = null, limit = bm25Limit)
             }
         }
 
-        val selected = ranked.filter { it.second >= 1.0 }.map { it.first }
-        val topScore = ranked.firstOrNull()?.second ?: 0.0
+        val selected: List<RagDocument>
+        val topScore: Double
+
+        if (useHybrid) {
+            val qVec = KofuNativeEngine.nativeEmbedTextInt8(rawQuery)
+            val semanticRanked = if (qVec != null) {
+                val (directBuf, docIndices, dim, docsSnapshot) = synchronized(lock) {
+                    Quad(corpusVectorsDirect, corpusDocIndices, embedDim, documents.toList())
+                }
+                val numDocs = docIndices.size
+                val cosScores = if (directBuf != null && numDocs > 0 && qVec.size == dim) {
+                    KofuNativeEngine.nativeScoreInt8CosineDirect(qVec, directBuf, numDocs, dim)
+                } else null
+                if (cosScores != null) {
+                    cosScores.indices
+                        .map { pos -> docsSnapshot[docIndices[pos]] to cosScores[pos] }
+                        .sortedByDescending { it.second }
+                        .take(8)
+                } else emptyList()
+            } else emptyList()
+
+            if (semanticRanked.isNotEmpty()) {
+                val fused = computeRrfFusion(bm25Ranked, semanticRanked, limit = maxChunks)
+                selected = fused.map { it.first }
+                topScore = fused.firstOrNull()?.second ?: 0.0
+            } else {
+                selected = bm25Ranked.filter { it.second >= 1.0 }.take(maxChunks).map { it.first }
+                topScore = bm25Ranked.firstOrNull()?.second ?: 0.0
+            }
+        } else {
+            selected = bm25Ranked.filter { it.second >= 1.0 }.map { it.first }
+            topScore = bm25Ranked.firstOrNull()?.second ?: 0.0
+        }
 
         val formatted = buildCompactContext(selected, maxContextChars)
         val estTokens = if (formatted.isBlank()) 0 else (formatted.length / 4).coerceAtLeast(1)
@@ -449,8 +609,24 @@ class KofuRagDatabase private constructor(
         return result
     }
 
+    private data class Quad<A, B, C, D>(val first: A, val second: B, val third: C, val fourth: D)
+
+    private data class EmbeddingRow(
+        val docId: String,
+        val dim: Int,
+        val vector: ByteArray,
+        val contentHash: String
+    )
+
     private class RagSqliteHelper(context: Context) :
-        SQLiteOpenHelper(context, "kofu_rag_offline.db", null, 1) {
+        SQLiteOpenHelper(context, "kofu_rag_offline.db", null, 2) {
+
+        override fun onConfigure(db: SQLiteDatabase) {
+            super.onConfigure(db)
+            // Limitar caché de páginas SQLite a ~1 MB para proteger presupuesto <= 2 GB
+            db.rawQuery("PRAGMA cache_size = -1024", null).use { }
+            db.rawQuery("PRAGMA temp_store = FILE", null).use { }
+        }
 
         override fun onCreate(db: SQLiteDatabase) {
             db.execSQL(
@@ -473,15 +649,71 @@ class KofuRagDatabase private constructor(
                 );
                 """.trimIndent()
             )
+            db.execSQL(
+                """
+                CREATE TABLE IF NOT EXISTS rag_embeddings (
+                    doc_id TEXT PRIMARY KEY,
+                    dim INTEGER NOT NULL,
+                    vector BLOB NOT NULL,
+                    content_hash TEXT NOT NULL
+                );
+                """.trimIndent()
+            )
         }
 
         override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) {
+            db.execSQL("DROP TABLE IF EXISTS rag_embeddings")
             db.execSQL("DROP TABLE IF EXISTS rag_documents_fts")
             db.execSQL("DROP TABLE IF EXISTS rag_meta")
             onCreate(db)
         }
 
-        fun replaceDocuments(docs: List<RagDocument>) {
+        fun getMeta(key: String): String? {
+            return readableDatabase.rawQuery(
+                "SELECT value FROM rag_meta WHERE key = ? LIMIT 1",
+                arrayOf(key)
+            ).use { cursor ->
+                if (cursor.moveToFirst()) cursor.getString(0) else null
+            }
+        }
+
+        fun loadAllEmbeddings(expectedDim: Int): Map<String, EmbeddingRow> {
+            val out = HashMap<String, EmbeddingRow>()
+            readableDatabase.rawQuery(
+                "SELECT doc_id, dim, vector, content_hash FROM rag_embeddings WHERE dim = ?",
+                arrayOf(expectedDim.toString())
+            ).use { cursor ->
+                while (cursor.moveToNext()) {
+                    val docId = cursor.getString(0)
+                    val dim = cursor.getInt(1)
+                    val blob = cursor.getBlob(2)
+                    val hash = cursor.getString(3)
+                    out[docId] = EmbeddingRow(docId, dim, blob, hash)
+                }
+            }
+            return out
+        }
+
+        fun upsertEmbeddings(rows: List<EmbeddingRow>) {
+            val db = writableDatabase
+            db.beginTransaction()
+            try {
+                for (row in rows) {
+                    val values = ContentValues().apply {
+                        put("doc_id", row.docId)
+                        put("dim", row.dim)
+                        put("vector", row.vector)
+                        put("content_hash", row.contentHash)
+                    }
+                    db.insertWithOnConflict("rag_embeddings", null, values, SQLiteDatabase.CONFLICT_REPLACE)
+                }
+                db.setTransactionSuccessful()
+            } finally {
+                db.endTransaction()
+            }
+        }
+
+        fun replaceDocuments(docs: List<RagDocument>, datasetHash: String) {
             val db = writableDatabase
             db.beginTransaction()
             try {
@@ -496,11 +728,16 @@ class KofuRagDatabase private constructor(
                     }
                     db.insert("rag_documents_fts", null, values)
                 }
-                val metaValues = ContentValues().apply {
+                val countValues = ContentValues().apply {
                     put("key", "doc_count")
                     put("value", docs.size.toString())
                 }
-                db.insertWithOnConflict("rag_meta", null, metaValues, SQLiteDatabase.CONFLICT_REPLACE)
+                db.insertWithOnConflict("rag_meta", null, countValues, SQLiteDatabase.CONFLICT_REPLACE)
+                val hashValues = ContentValues().apply {
+                    put("key", META_DATASET_HASH)
+                    put("value", datasetHash)
+                }
+                db.insertWithOnConflict("rag_meta", null, hashValues, SQLiteDatabase.CONFLICT_REPLACE)
                 db.setTransactionSuccessful()
             } finally {
                 db.endTransaction()

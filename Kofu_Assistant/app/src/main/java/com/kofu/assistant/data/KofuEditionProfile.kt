@@ -7,6 +7,9 @@ import com.kofu.assistant.BuildConfig
  * - NODE_7NM_LEGACY (Android 5.0–7.1+, ARMv8.0-A): síntesis ultraligera y consulta factual rápida.
  * - NODE_5NM_MAINSTREAM (Android 8.0–15.0, ARMv8.2-A DotProd+FP16): ingeniería de software y código.
  * - FRONTIER_SUB5NM (Android 16+ Flagship <5nm, ARMv8.6-A/ARMv9 i8mm): razonamiento profundo y ciencia avanzada.
+ *
+ * En la rama kofu-go se aplica además un presupuesto estricto <= 2 GB (modelo + KV + RAG + ART)
+ * para dispositivos de gama media/entrada (<= 6 GB RAM física) evitando terminaciones por lmkd.
  */
 enum class SiliconEdition(
     val code: String,
@@ -25,37 +28,37 @@ enum class SiliconEdition(
 ) {
     NODE_7NM_LEGACY(
         code = "7NM_LEGACY",
-        editionTitle = "Kofu 7nm Legacy",
-        badgeLabel = "7nm • API 21+",
+        editionTitle = "Aura (7nm Edge)",
+        badgeLabel = "7nm • <=2GB Guard",
         androidRange = "Android 5.0–7.x",
-        aiTaskFocus = "Síntesis Ultraligera, Triaje Rápido y Consulta Factual Offline",
+        aiTaskFocus = "Gemma 3 1B 4-bit, RAG Escolar y Respuesta Rápida Offline",
         isaTarget = "ARMv8.0-A NEON Universal (Sin DotProd/i8mm)",
-        defaultModelId = "kofu-2b",
-        defaultMaxTokens = 384,
+        defaultModelId = "kofu-go-1b",
+        defaultMaxTokens = 224,
         defaultTemperature = 0.25f,
         maxRagChunks = 1,
-        maxRagContextChars = 280,
+        maxRagContextChars = 180,
         maxInMemoryMessages = 100,
-        defaultSystemPrompt = "Eres Kofu (Edición 7nm Ultraligera). Tu especialidad es síntesis rápida, clasificación y respuestas factuales directas. Responde siempre en máximo 3 oraciones concisas en español usando el contexto verificado."
+        defaultSystemPrompt = "Eres Aura, asistente educativa en el dispositivo. Responde conciso y preciso en español usando el contexto."
     ),
     NODE_5NM_MAINSTREAM(
         code = "5NM_MAINSTREAM",
-        editionTitle = "Kofu 5nm Mainstream",
+        editionTitle = "Aura (5nm Edge)",
         badgeLabel = "5nm • API 26–35",
         androidRange = "Android 8.0–15.0",
-        aiTaskFocus = "Ingeniería de Software, Código y Asistencia Técnica Multidisciplinaria",
+        aiTaskFocus = "Programación, Matemáticas, Español y Asistencia Escolar Offline",
         isaTarget = "ARMv8.2-A NEON + DotProd + FP16 (Kryo Prime/Perf)",
-        defaultModelId = "kofu-v2",
-        defaultMaxTokens = 1024,
-        defaultTemperature = 0.55f,
+        defaultModelId = "kofu-go-1b",
+        defaultMaxTokens = 640,
+        defaultTemperature = 0.35f,
         maxRagChunks = 2,
-        maxRagContextChars = 480,
-        maxInMemoryMessages = 250,
-        defaultSystemPrompt = "Eres Kofu (Edición 5nm Ingeniería & Código). Tu especialidad es programación en C++20/Kotlin/Python, arquitectura de sistemas y asistencia técnica precisa en español."
+        maxRagContextChars = 360,
+        maxInMemoryMessages = 150,
+        defaultSystemPrompt = "Eres Aura, asistente educativa local experta en programación, matemáticas, español y ciencias. Responde con claridad en español."
     ),
     FRONTIER_SUB5NM(
         code = "FRONTIER_SUB5NM",
-        editionTitle = "Kofu <5nm Frontier Flagship",
+        editionTitle = "Aura Frontier (<5nm)",
         badgeLabel = "<5nm • API 36+",
         androidRange = "Android 16+ Frontera",
         aiTaskFocus = "Razonamiento Profundo, Ciencia Avanzada y Contexto Extendido",
@@ -66,12 +69,39 @@ enum class SiliconEdition(
         maxRagChunks = 3,
         maxRagContextChars = 720,
         maxInMemoryMessages = 400,
-        defaultSystemPrompt = "Eres Kofu (Edición <5nm Frontier Flagship). Tu especialidad es razonamiento lógico profundo, demostraciones científicas/matemáticas y arquitectura avanzada con análisis estructurado paso a paso en español."
+        defaultSystemPrompt = "Eres Aura (Edición Frontier). Tu especialidad es razonamiento lógico profundo, ciencias, matemáticas y programación paso a paso en español."
     );
 }
 
 object KofuEditionProfile {
+    const val STRICT_2GB_PROCESS_RSS_MB = 1850L
+    const val LOW_RAM_DEVICE_THRESHOLD_MB = 6144L
+
+    @Volatile
+    var deviceTotalRamMb: Long = 0L
+        private set
+
     val current: SiliconEdition by lazy { fromCode(BuildConfig.SILICON_TIER) }
+
+    val isStrict2GbBudgetActive: Boolean
+        get() = current == SiliconEdition.NODE_7NM_LEGACY ||
+            (deviceTotalRamMb in 1L..LOW_RAM_DEVICE_THRESHOLD_MB) ||
+            current == SiliconEdition.NODE_5NM_MAINSTREAM
+
+    val effectiveMaxRagChunks: Int
+        get() = if (isStrict2GbBudgetActive) 1 else current.maxRagChunks
+
+    val effectiveMaxRagContextChars: Int
+        get() = if (isStrict2GbBudgetActive) 180 else current.maxRagContextChars
+
+    val effectiveMaxTokens: Int
+        get() = if (isStrict2GbBudgetActive) minOf(current.defaultMaxTokens, 256) else current.defaultMaxTokens
+
+    fun configureForDeviceRam(totalRamBytes: Long) {
+        if (totalRamBytes > 0L) {
+            deviceTotalRamMb = totalRamBytes / (1024L * 1024L)
+        }
+    }
 
     fun fromCode(code: String): SiliconEdition {
         return SiliconEdition.entries.find { it.code == code } ?: SiliconEdition.NODE_5NM_MAINSTREAM

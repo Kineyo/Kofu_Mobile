@@ -5,12 +5,16 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.animateContentSize
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -82,16 +86,22 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.kofu.assistant.BuildConfig
+import com.kofu.assistant.R
 import com.kofu.assistant.data.ChatCacheManager
 import com.kofu.assistant.data.ChatMessageData
 import com.kofu.assistant.data.ChatSession
@@ -119,18 +129,20 @@ data class ChatMessage(
     val sender: MessageSender,
     val text: String,
     val isPending: Boolean = false,
-    val isSystemNotice: Boolean = false
+    val isSystemNotice: Boolean = false,
+    val isStreaming: Boolean = false,
+    val animateEntry: Boolean = false
 )
 
 private val FORMAL_QUICK_PROMPTS = listOf(
+    "¿Quién eres y cómo te llamas?",
     "Explica el modelo de memoria y punteros en C++ con un ejemplo",
-    "Arquitectura de concurrencia y Coroutines en Kotlin",
-    "Diferencias de latencia y soberanía entre inferencia local y cloud",
-    "Implementa una función recursiva para la serie Fibonacci en Python"
+    "Resuelve paso a paso la ecuación cuadrática x^2 - 5x + 6 = 0",
+    "Reglas básicas de acentuación en español (agudas, graves y esdrújulas)"
 )
 
 private const val WELCOME_MESSAGE =
-    "Inferencia local activa con llama.cpp ARM64. Modelo listo para consultas."
+    "Aura activa 100% offline con llama.cpp ARM64. Lista para ayudarte con tus materias."
 
 @Composable
 fun ChatScreen(
@@ -231,7 +243,7 @@ fun ChatScreen(
         isSending = true
         inputText = ""
 
-        val userMsg = ChatMessage(sender = MessageSender.USER, text = userMsgText)
+        val userMsg = ChatMessage(sender = MessageSender.USER, text = userMsgText, animateEntry = true)
         messages.add(userMsg)
 
         if (currentSession.title == "Conversación inicial" || currentSession.title == "Nueva conversación") {
@@ -245,16 +257,28 @@ fun ChatScreen(
             ChatMessage(
                 id = pendingId,
                 sender = MessageSender.KOFU,
-                text = "Procesando con llama.cpp...",
+                text = "Buscando contexto...",
                 isPending = true,
-                isSystemNotice = true
+                isSystemNotice = true,
+                animateEntry = true
             )
         )
 
         activeGenerationJob = scope.launch {
             var accumulatedText = ""
+            var isFirstChunk = true
+            val stageWatcherJob = scope.launch {
+                while (isFirstChunk) {
+                    val stage = repository.currentPrefillStageText
+                    val idx = messages.indexOfFirst { it.id == pendingId }
+                    if (idx != -1 && messages[idx].isPending && messages[idx].text != stage) {
+                        messages[idx] = messages[idx].copy(text = stage)
+                    }
+                    kotlinx.coroutines.delay(120L)
+                }
+            }
             try {
-                var isFirstChunk = true
+                var lastUiUpdateMs = 0L
 
                 val rawTurns = messages
                     .filter { !it.isPending && !it.isSystemNotice && it.text.isNotBlank() }
@@ -264,9 +288,30 @@ fun ChatScreen(
                 repository.generateChatStream(historyTurns).collect { chunk ->
                     if (isFirstChunk) {
                         isFirstChunk = false
+                        stageWatcherJob.cancel()
                         accumulatedText = ""
                     }
                     accumulatedText += chunk
+                    val nowMs = System.currentTimeMillis()
+                    if (nowMs - lastUiUpdateMs >= 80L) {
+                        lastUiUpdateMs = nowMs
+                        val index = messages.indexOfFirst { it.id == pendingId }
+                        if (index != -1) {
+                            messages[index] = ChatMessage(
+                                id = pendingId,
+                                sender = MessageSender.KOFU,
+                                text = accumulatedText,
+                                isPending = false,
+                                isSystemNotice = false,
+                                isStreaming = true
+                            )
+                        }
+                    }
+                }
+                stageWatcherJob.cancel()
+
+                // Flush obligatorio al finalizar el stream para no perder los últimos tokens bajo throttling
+                if (accumulatedText.isNotEmpty()) {
                     val index = messages.indexOfFirst { it.id == pendingId }
                     if (index != -1) {
                         messages[index] = ChatMessage(
@@ -274,7 +319,8 @@ fun ChatScreen(
                             sender = MessageSender.KOFU,
                             text = accumulatedText,
                             isPending = false,
-                            isSystemNotice = false
+                            isSystemNotice = false,
+                            isStreaming = false
                         )
                     }
                 }
@@ -294,13 +340,15 @@ fun ChatScreen(
                 persistMessages()
             } catch (_: CancellationException) {
                 val index = messages.indexOfFirst { it.id == pendingId }
-                if (index != -1 && messages[index].isPending) {
-                    messages[index] = ChatMessage(
-                        id = pendingId,
-                        sender = MessageSender.KOFU,
-                        text = if (accumulatedText.isNotBlank()) accumulatedText else "[Generación detenida]",
+                if (index != -1) {
+                    val cur = messages[index]
+                    messages[index] = cur.copy(
+                        text = if (cur.isPending) {
+                            if (accumulatedText.isNotBlank()) accumulatedText else "[Generación detenida]"
+                        } else cur.text,
                         isPending = false,
-                        isSystemNotice = accumulatedText.isBlank()
+                        isSystemNotice = cur.isPending && accumulatedText.isBlank(),
+                        isStreaming = false
                     )
                 }
                 persistMessages()
@@ -313,11 +361,13 @@ fun ChatScreen(
                         sender = MessageSender.KOFU,
                         text = "Error de motor: ${e.localizedMessage ?: "Fallo de conexión"}",
                         isPending = false,
-                        isSystemNotice = true
+                        isSystemNotice = true,
+                        isStreaming = false
                     )
                 }
                 persistMessages()
             } finally {
+                stageWatcherJob.cancel()
                 if (activePendingId == pendingId) {
                     activePendingId = null
                     activeGenerationJob = null
@@ -326,6 +376,8 @@ fun ChatScreen(
             }
         }
     }
+
+    val animatedMessageIds = remember(currentSession.id) { mutableSetOf<String>() }
 
     LaunchedEffect(messages.size, messages.lastOrNull()?.text) {
         if (messages.isNotEmpty() && (isSending || messages.size > 1)) {
@@ -562,6 +614,7 @@ fun ChatScreen(
                             }
                         } else {
                             items(messages, key = { it.id }) { msg ->
+                                val shouldAnimateEntry = msg.animateEntry && !animatedMessageIds.contains(msg.id)
                                 FormalChatBubble(
                                     message = msg,
                                     userBubbleColor = colors.userBubble,
@@ -569,7 +622,9 @@ fun ChatScreen(
                                     kofuBubbleColor = colors.kofuBubble,
                                     kofuBubbleBorder = colors.kofuBubbleBorder,
                                     kofuTextColor = colors.kofuText,
-                                    fontScale = currentFontScale
+                                    fontScale = currentFontScale,
+                                    shouldAnimateEntry = shouldAnimateEntry,
+                                    onEntryAnimated = { animatedMessageIds.add(msg.id) }
                                 )
                             }
                         }
@@ -601,7 +656,7 @@ fun ChatScreen(
                                 enabled = serverReady,
                                 placeholder = {
                                     Text(
-                                        text = if (serverReady) "Enviar mensaje a Kofu..." else "Esperando conexión con el motor...",
+                                        text = if (serverReady) "Enviar mensaje a Aura..." else "Esperando conexión con el motor...",
                                         color = colors.onSurfaceSecondary,
                                         fontSize = currentFontScale.bodySp.sp,
                                         maxLines = 1,
@@ -651,14 +706,20 @@ fun ChatScreen(
                                             val pendingId = activePendingId
                                             if (pendingId != null) {
                                                 val idx = messages.indexOfFirst { it.id == pendingId }
-                                                if (idx != -1 && messages[idx].isPending) {
-                                                    messages[idx] = ChatMessage(
-                                                        id = pendingId,
-                                                        sender = MessageSender.KOFU,
-                                                        text = "[Generación detenida]",
-                                                        isPending = false,
-                                                        isSystemNotice = true
-                                                    )
+                                                if (idx != -1) {
+                                                    val cur = messages[idx]
+                                                    messages[idx] = if (cur.isPending) {
+                                                        ChatMessage(
+                                                            id = pendingId,
+                                                            sender = MessageSender.KOFU,
+                                                            text = "[Generación detenida]",
+                                                            isPending = false,
+                                                            isSystemNotice = true,
+                                                            isStreaming = false
+                                                        )
+                                                    } else {
+                                                        cur.copy(isStreaming = false)
+                                                    }
                                                 }
                                             }
                                             isSending = false
@@ -1116,8 +1177,18 @@ private fun CompactTopAppBar(
                         )
                     }
 
+                    Image(
+                        painter = painterResource(id = R.drawable.aura_logo),
+                        contentDescription = "Logo Aura",
+                        contentScale = ContentScale.Crop,
+                        modifier = Modifier
+                            .size(24.dp)
+                            .clip(CircleShape)
+                            .border(1.dp, colors.divider, CircleShape)
+                    )
+
                     Text(
-                        text = "KOFU",
+                        text = "AURA",
                         fontWeight = FontWeight.Black,
                         color = colors.onSurface,
                         fontSize = 16.sp,
@@ -1200,8 +1271,18 @@ private fun FormalHeroCard(
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.SpaceBetween
+                horizontalArrangement = Arrangement.spacedBy(10.dp)
             ) {
+                Image(
+                    painter = painterResource(id = R.drawable.aura_logo),
+                    contentDescription = "Logo Aura",
+                    contentScale = ContentScale.Crop,
+                    modifier = Modifier
+                        .size(36.dp)
+                        .clip(CircleShape)
+                        .border(1.dp, colors.divider, CircleShape)
+                )
+
                 Column(modifier = Modifier.weight(1f)) {
                     val edition = KofuEditionProfile.current
                     Text(
@@ -1282,15 +1363,35 @@ fun FormalChatBubble(
     kofuBubbleColor: Color,
     kofuBubbleBorder: Color,
     kofuTextColor: Color,
-    fontScale: KofuFontScale
+    fontScale: KofuFontScale,
+    shouldAnimateEntry: Boolean = false,
+    onEntryAnimated: () -> Unit = {}
 ) {
     val isUser = message.sender == MessageSender.USER
     val colors = LocalKofuColors.current
     val clipboard = LocalClipboardManager.current
     val context = LocalContext.current
 
+    val entryProgress = remember(message.id) {
+        Animatable(if (shouldAnimateEntry) 0f else 1f)
+    }
+    LaunchedEffect(message.id) {
+        if (entryProgress.value < 1f) {
+            entryProgress.animateTo(
+                targetValue = 1f,
+                animationSpec = tween(durationMillis = 180, easing = FastOutSlowInEasing)
+            )
+            onEntryAnimated()
+        }
+    }
+
     Row(
-        modifier = Modifier.fillMaxWidth(),
+        modifier = Modifier
+            .fillMaxWidth()
+            .graphicsLayer {
+                alpha = entryProgress.value
+                translationY = (1f - entryProgress.value) * 14f
+            },
         horizontalArrangement = if (isUser) Arrangement.End else Arrangement.Start
     ) {
         if (isUser) {
@@ -1320,17 +1421,6 @@ fun FormalChatBubble(
                 }
             }
         } else {
-            val infiniteTransition = rememberInfiniteTransition(label = "pulse")
-            val pulseAlpha by infiniteTransition.animateFloat(
-                initialValue = 0.5f,
-                targetValue = 1.0f,
-                animationSpec = infiniteRepeatable(
-                    animation = tween(600),
-                    repeatMode = RepeatMode.Reverse
-                ),
-                label = "alpha"
-            )
-
             Surface(
                 color = kofuBubbleColor,
                 shape = KofuDesignSystem.KofuBubbleShape,
@@ -1346,7 +1436,7 @@ fun FormalChatBubble(
                         horizontalArrangement = Arrangement.SpaceBetween
                     ) {
                         Text(
-                            text = "KOFU",
+                            text = "AURA",
                             fontWeight = FontWeight.Bold,
                             fontFamily = FontFamily.Monospace,
                             fontSize = 9.sp,
@@ -1371,11 +1461,271 @@ fun FormalChatBubble(
 
                     Spacer(modifier = Modifier.height(4.dp))
 
-                    FormalFormattedContent(
-                        text = message.text,
-                        textColor = kofuTextColor,
-                        isPending = message.isPending,
-                        pulseAlpha = pulseAlpha,
+                    val contentMod = if (message.isStreaming) {
+                        Modifier.animateContentSize(animationSpec = tween(durationMillis = 80))
+                    } else {
+                        Modifier
+                    }
+                    Box(modifier = contentMod) {
+                        FormalFormattedContent(
+                            text = message.text,
+                            textColor = kofuTextColor,
+                            isPending = message.isPending,
+                            isStreaming = message.isStreaming,
+                            fontScale = fontScale
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+private sealed interface MarkdownSegment {
+    data class PlainText(val text: String) : MarkdownSegment
+    data class CodeBlock(val lang: String, val code: String) : MarkdownSegment
+}
+
+private fun parseClosedMarkdownSegments(
+    source: String,
+    codeBlockRegex: Regex
+): List<MarkdownSegment> {
+    if (source.isEmpty()) return emptyList()
+    val matches = codeBlockRegex.findAll(source).toList()
+    if (matches.isEmpty()) {
+        val trimmed = source.trim()
+        return if (trimmed.isNotEmpty()) listOf(MarkdownSegment.PlainText(trimmed)) else emptyList()
+    }
+    val out = ArrayList<MarkdownSegment>(matches.size * 2 + 1)
+    var lastIdx = 0
+    for (m in matches) {
+        val pre = source.substring(lastIdx, m.range.first).trim()
+        if (pre.isNotEmpty()) out.add(MarkdownSegment.PlainText(pre))
+        out.add(
+            MarkdownSegment.CodeBlock(
+                lang = m.groupValues[1].ifBlank { "CODE" },
+                code = m.groupValues[2].trimEnd()
+            )
+        )
+        lastIdx = m.range.last + 1
+    }
+    if (lastIdx < source.length) {
+        val post = source.substring(lastIdx).trim()
+        if (post.isNotEmpty()) out.add(MarkdownSegment.PlainText(post))
+    }
+    return out
+}
+
+/**
+ * Texto con entrada suave de tokens recién llegados (~110 ms), conservando
+ * todas las palabras ya impresas en opacidad 1.0 sin parpadeos ni layout extra.
+ */
+@Composable
+private fun StreamingAppearanceText(
+    text: String,
+    textColor: Color,
+    isStreaming: Boolean,
+    fontScale: KofuFontScale,
+    fontFamily: FontFamily = FontFamily.Default
+) {
+    val fontSizeSp = if (fontFamily == FontFamily.Monospace) fontScale.codeSp.sp else fontScale.bodySp.sp
+    val lineHeightSp = if (fontFamily == FontFamily.Monospace) (fontScale.codeSp + 4).sp else (fontScale.bodySp + 5).sp
+
+    var settledLength by remember { mutableStateOf(if (isStreaming) 0 else text.length) }
+    var previousLength by remember { mutableStateOf(if (isStreaming) 0 else text.length) }
+    val deltaAlpha = remember { Animatable(if (isStreaming) 0.18f else 1f) }
+
+    LaunchedEffect(text.length, isStreaming) {
+        if (!isStreaming) {
+            settledLength = text.length
+            previousLength = text.length
+            deltaAlpha.snapTo(1f)
+            return@LaunchedEffect
+        }
+        if (text.length > previousLength) {
+            settledLength = previousLength.coerceIn(0, text.length)
+            previousLength = text.length
+            deltaAlpha.snapTo(0.18f)
+            deltaAlpha.animateTo(1f, tween(durationMillis = 110, easing = FastOutSlowInEasing))
+            settledLength = text.length
+        } else if (text.length < previousLength) {
+            settledLength = text.length
+            previousLength = text.length
+            deltaAlpha.snapTo(1f)
+        }
+    }
+
+    if (!isStreaming || settledLength >= text.length) {
+        Text(
+            text = text,
+            fontSize = fontSizeSp,
+            color = textColor,
+            lineHeight = lineHeightSp,
+            fontFamily = fontFamily
+        )
+    } else {
+        val safeSettled = settledLength.coerceIn(0, text.length)
+        val annotated = buildAnnotatedString {
+            if (safeSettled > 0) {
+                append(text.substring(0, safeSettled))
+            }
+            pushStyle(SpanStyle(color = textColor.copy(alpha = deltaAlpha.value)))
+            append(text.substring(safeSettled))
+            pop()
+        }
+        Text(
+            text = annotated,
+            fontSize = fontSizeSp,
+            color = textColor,
+            lineHeight = lineHeightSp,
+            fontFamily = fontFamily
+        )
+    }
+}
+
+private val CODE_BLOCK_REGEX = Regex("```([a-zA-Z0-9_-]*)\\n?([\\s\\S]*?)```")
+
+@Composable
+fun FormalFormattedContent(
+    text: String,
+    textColor: Color,
+    isPending: Boolean,
+    fontScale: KofuFontScale,
+    isStreaming: Boolean = false
+) {
+    val clipboard = LocalClipboardManager.current
+    val context = LocalContext.current
+
+    if (isPending) {
+        val infiniteTransition = rememberInfiniteTransition(label = "pulse")
+        val pulseAlpha by infiniteTransition.animateFloat(
+            initialValue = 0.5f,
+            targetValue = 1.0f,
+            animationSpec = infiniteRepeatable(
+                animation = tween(600),
+                repeatMode = RepeatMode.Reverse
+            ),
+            label = "alpha"
+        )
+        Text(
+            text = text,
+            fontSize = fontScale.bodySp.sp,
+            color = textColor,
+            lineHeight = (fontScale.bodySp + 5).sp,
+            fontWeight = FontWeight.Light,
+            modifier = Modifier.graphicsLayer { alpha = pulseAlpha }
+        )
+        return
+    }
+
+    if (!text.contains("```")) {
+        StreamingAppearanceText(
+            text = text,
+            textColor = textColor,
+            isStreaming = isStreaming,
+            fontScale = fontScale
+        )
+        return
+    }
+
+    // Separar bloques ``` ya cerrados (cacheados sin re-evaluar Regex) de la cola activa en streaming
+    val fenceCount = remember(text) {
+        var count = 0
+        var idx = text.indexOf("```")
+        while (idx != -1) {
+            count++
+            idx = text.indexOf("```", idx + 3)
+        }
+        count
+    }
+    val closedPairs = fenceCount / 2
+    val splitOffset = remember(text, closedPairs) {
+        if (closedPairs == 0) {
+            0
+        } else {
+            var pairs = 0
+            var pos = 0
+            while (pairs < closedPairs) {
+                val open = text.indexOf("```", pos)
+                if (open == -1) break
+                val close = text.indexOf("```", open + 3)
+                if (close == -1) break
+                pos = close + 3
+                pairs++
+            }
+            pos
+        }
+    }
+
+    val closedPrefix = remember(text.substring(0, splitOffset)) {
+        text.substring(0, splitOffset)
+    }
+    val cachedSegments = remember(closedPrefix) {
+        parseClosedMarkdownSegments(closedPrefix, CODE_BLOCK_REGEX)
+    }
+
+    val rawTail = text.substring(splitOffset)
+    val isUnclosedTail = (fenceCount % 2 == 1)
+
+    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        for (segment in cachedSegments) {
+            when (segment) {
+                is MarkdownSegment.PlainText -> {
+                    Text(
+                        text = segment.text,
+                        fontSize = fontScale.bodySp.sp,
+                        color = textColor,
+                        lineHeight = (fontScale.bodySp + 5).sp
+                    )
+                }
+                is MarkdownSegment.CodeBlock -> {
+                    CodeBlockSurface(
+                        lang = segment.lang,
+                        code = segment.code,
+                        isStreamingCode = false,
+                        fontScale = fontScale,
+                        onCopy = {
+                            clipboard.setText(AnnotatedString(segment.code))
+                            Toast.makeText(context, "Código copiado", Toast.LENGTH_SHORT).show()
+                        }
+                    )
+                }
+            }
+        }
+
+        if (rawTail.isNotBlank()) {
+            if (isUnclosedTail) {
+                val openIdx = rawTail.indexOf("```")
+                val preTail = rawTail.substring(0, openIdx).trim()
+                if (preTail.isNotEmpty()) {
+                    Text(
+                        text = preTail,
+                        fontSize = fontScale.bodySp.sp,
+                        color = textColor,
+                        lineHeight = (fontScale.bodySp + 5).sp
+                    )
+                }
+                val afterFence = rawTail.substring(openIdx + 3)
+                val nlIdx = afterFence.indexOf('\n')
+                val lang = if (nlIdx >= 0) afterFence.substring(0, nlIdx).trim().ifBlank { "CODE" } else "CODE"
+                val codeBody = if (nlIdx >= 0) afterFence.substring(nlIdx + 1) else ""
+                CodeBlockSurface(
+                    lang = lang,
+                    code = codeBody,
+                    isStreamingCode = isStreaming,
+                    fontScale = fontScale,
+                    onCopy = {
+                        clipboard.setText(AnnotatedString(codeBody.trimEnd()))
+                        Toast.makeText(context, "Código copiado", Toast.LENGTH_SHORT).show()
+                    }
+                )
+            } else {
+                val tailText = rawTail.trim()
+                if (tailText.isNotEmpty()) {
+                    StreamingAppearanceText(
+                        text = tailText,
+                        textColor = textColor,
+                        isStreaming = isStreaming,
                         fontScale = fontScale
                     )
                 }
@@ -1385,108 +1735,54 @@ fun FormalChatBubble(
 }
 
 @Composable
-fun FormalFormattedContent(
-    text: String,
-    textColor: Color,
-    isPending: Boolean,
-    pulseAlpha: Float,
-    fontScale: KofuFontScale
+private fun CodeBlockSurface(
+    lang: String,
+    code: String,
+    isStreamingCode: Boolean,
+    fontScale: KofuFontScale,
+    onCopy: () -> Unit
 ) {
-    val clipboard = LocalClipboardManager.current
-    val context = LocalContext.current
     val colors = LocalKofuColors.current
-    val codeBlockRegex = remember { Regex("```([a-zA-Z0-9_-]*)\\n?([\\s\\S]*?)```") }
-
-    // Si durante el streaming hay un bloque de código abierto sin cerrar, lo cerramos virtualmente para renderizarlo inmediatamente
-    val isUnclosedCodeBlock = text.contains("```") && (text.split("```").size % 2 == 0)
-    val renderText = if (isUnclosedCodeBlock) "$text\n```" else text
-
-    if (!renderText.contains("```")) {
-        Text(
-            text = text,
-            fontSize = fontScale.bodySp.sp,
-            color = textColor,
-            lineHeight = (fontScale.bodySp + 5).sp,
-            fontWeight = if (isPending) FontWeight.Light else FontWeight.Normal,
-            modifier = if (isPending) Modifier.alpha(pulseAlpha) else Modifier
-        )
-        return
-    }
-
-    val matches = codeBlockRegex.findAll(renderText).toList()
-    var lastIndex = 0
-
-    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-        for (match in matches) {
-            val preText = renderText.substring(lastIndex, match.range.first).trim()
-            if (preText.isNotEmpty()) {
-                Text(
-                    text = preText,
-                    fontSize = fontScale.bodySp.sp,
-                    color = textColor,
-                    lineHeight = (fontScale.bodySp + 5).sp
-                )
-            }
-            val lang = match.groupValues[1].ifBlank { "CODE" }
-            val code = match.groupValues[2].trimEnd()
-
-            Surface(
-                shape = KofuDesignSystem.ButtonShape,
-                color = colors.codeBlockBackground,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .border(1.dp, colors.codeBlockBorder, KofuDesignSystem.ButtonShape)
+    Surface(
+        shape = KofuDesignSystem.ButtonShape,
+        color = colors.codeBlockBackground,
+        modifier = Modifier
+            .fillMaxWidth()
+            .border(1.dp, colors.codeBlockBorder, KofuDesignSystem.ButtonShape)
+    ) {
+        Column(modifier = Modifier.padding(8.dp)) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
             ) {
-                Column(modifier = Modifier.padding(8.dp)) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Text(
-                            text = lang.uppercase(),
-                            color = colors.onSurfaceSecondary,
-                            fontSize = 10.sp,
-                            fontWeight = FontWeight.Bold,
-                            fontFamily = FontFamily.Monospace
-                        )
-                        Text(
-                            text = "COPIAR",
-                            color = colors.onSurface,
-                            fontSize = 9.sp,
-                            fontWeight = FontWeight.Bold,
-                            fontFamily = FontFamily.Monospace,
-                            modifier = Modifier
-                                .clip(KofuDesignSystem.ButtonShape)
-                                .clickable {
-                                    clipboard.setText(AnnotatedString(code))
-                                    Toast.makeText(context, "Código copiado", Toast.LENGTH_SHORT).show()
-                                }
-                                .padding(horizontal = 4.dp, vertical = 2.dp)
-                        )
-                    }
-                    Spacer(modifier = Modifier.height(4.dp))
-                    Text(
-                        text = code,
-                        color = colors.onSurface,
-                        fontSize = fontScale.codeSp.sp,
-                        lineHeight = (fontScale.codeSp + 4).sp,
-                        fontFamily = FontFamily.Monospace
-                    )
-                }
-            }
-            lastIndex = match.range.last + 1
-        }
-        if (lastIndex < renderText.length) {
-            val postText = renderText.substring(lastIndex).trim()
-            if (postText.isNotEmpty() && (!isUnclosedCodeBlock || postText != "```")) {
                 Text(
-                    text = postText,
-                    fontSize = fontScale.bodySp.sp,
-                    color = textColor,
-                    lineHeight = (fontScale.bodySp + 5).sp
+                    text = lang.uppercase(),
+                    color = colors.onSurfaceSecondary,
+                    fontSize = 10.sp,
+                    fontWeight = FontWeight.Bold,
+                    fontFamily = FontFamily.Monospace
+                )
+                Text(
+                    text = "COPIAR",
+                    color = colors.onSurface,
+                    fontSize = 9.sp,
+                    fontWeight = FontWeight.Bold,
+                    fontFamily = FontFamily.Monospace,
+                    modifier = Modifier
+                        .clip(KofuDesignSystem.ButtonShape)
+                        .clickable { onCopy() }
+                        .padding(horizontal = 4.dp, vertical = 2.dp)
                 )
             }
+            Spacer(modifier = Modifier.height(4.dp))
+            StreamingAppearanceText(
+                text = code,
+                textColor = colors.onSurface,
+                isStreaming = isStreamingCode,
+                fontScale = fontScale,
+                fontFamily = FontFamily.Monospace
+            )
         }
     }
 }

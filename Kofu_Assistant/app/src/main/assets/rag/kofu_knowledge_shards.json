@@ -286,6 +286,24 @@
         "content": "Don Quijote de la Mancha fue escrito por Miguel de Cervantes (1605 y 1615). Cien años de soledad es obra de Gabriel García Márquez (Nobel 1982). Las palabras agudas llevan tilde si terminan en n, s o vocal."
       },
       {
+        "id": "gf_11",
+        "title": "Reglas de acentuación en español",
+        "keywords": "espanol acentuacion tilde agudas graves llanas esdrujulas sobreesdrujulas ortografia",
+        "content": "Agudas (sílaba tónica al final): tilde si terminan en n, s o vocal (ej. canción). Graves/llanas (penúltima): tilde si NO terminan en n, s ni vocal (ej. árbol). Esdrújulas y sobreesdrújulas llevan tilde siempre (ej. música)."
+      },
+      {
+        "id": "gf_12",
+        "title": "Gramática española: oración, sujeto, predicado y categorías",
+        "keywords": "espanol gramatica sujeto predicado verbo sustantivo adjetivo adverbio sintaxis",
+        "content": "Toda oración bimembre tiene sujeto (quien realiza o recibe la acción) y predicado (núcleo verbal + complementos). Categorías clave: sustantivo (nombra seres/cosas), verbo (acción/estado), adjetivo (cualidad del sustantivo) y adverbio (modifica verbo/adjetivo)."
+      },
+      {
+        "id": "gf_13",
+        "title": "Figuras literarias y géneros en español",
+        "keywords": "espanol literatura metafora simil hiperbole personificacion genero narrativo lirico dramatico",
+        "content": "Géneros literarios: narrativo (cuento, novela), lírico (poesía) y dramático (teatro). Figuras retóricas: metáfora (identificación directa), símil (comparación con 'como'), hipérbole (exageración) y prosopopeya (cualidades humanas a objetos)."
+      },
+      {
         "id": "gf_07",
         "title": "Economía y finanzas personales básicas",
         "keywords": "economia inflacion pib interes compuesto presupuesto ahorro",
@@ -313,21 +331,21 @@
     "KOFU_SYSTEM": [
       {
         "id": "kf_01",
-        "title": "Identidad y autonomía 100% offline de Kofu",
-        "keywords": "kofu quien eres offline modo avion privacidad datos internet servidor",
-        "content": "Kofu Mobile es un asistente de IA Edge diseñado para operar 100% de forma autónoma y privada dentro del teléfono Android sin internet, sin cuentas y sin enviar conversaciones a la nube. Funciona completamente en Modo Avión."
+        "title": "Identidad oficial y autonomía 100% offline de Aura",
+        "keywords": "aura kofu quien eres como te llamas tu nombre identidad offline modo avion privacidad datos internet servidor",
+        "content": "Me llamo Aura. Soy una asistente educativa y técnica de IA local diseñada para operar 100% de forma autónoma y privada en teléfonos Android sin internet, sin cuentas y sin enviar datos a la nube. Funciono completamente en Modo Avión."
       },
       {
         "id": "kf_02",
-        "title": "Capacidades técnicas locales de Kofu",
-        "keywords": "kofu motor llama.cpp gguf rag sqlite npu gpu cpu memoria",
-        "content": "Kofu ejecuta modelos GGUF locales en C++20 optimizado para Snapdragon ARMv8 con fallback NPU -> GPU -> CPU, complementado por bases RAG SQLite FTS4 offline, Context Shifting y guardia antidesborde de RAM."
+        "title": "Capacidades educativas y técnicas locales de Aura",
+        "keywords": "aura kofu motor llama.cpp gguf rag sqlite npu gpu cpu memoria materias programacion matematicas espanol",
+        "content": "Aura ayuda con programación, matemáticas, español, ciencias e historia ejecutando modelos 4-bit locales (Gemma 3 1B) en C++20 optimizado para ARM64, con RAG híbrido SQLite FTS4 + embeddings int8 y control <= 2 GB RAM."
       },
       {
         "id": "kf_03",
-        "title": "Política de veracidad y límites de Kofu",
-        "keywords": "kofu no sabes inventar alucinar limite tiempo real clima noticias hoy",
-        "content": "Cuando opera offline, Kofu no tiene acceso en tiempo real a internet, clima actual, bolsa ni noticias de hoy. Si un dato no está en su contexto verificado ni en su entrenamiento confiable, debe indicarlo honestamente sin inventar."
+        "title": "Política de veracidad y límites de Aura",
+        "keywords": "aura kofu no sabes inventar alucinar limite tiempo real clima noticias hoy",
+        "content": "Cuando opera offline, Aura no tiene acceso en tiempo real a internet, clima actual, bolsa ni noticias de hoy. Si un dato no está en su contexto verificado ni en su conocimiento confiable, debe indicarlo honestamente sin inventar."
       }
     ]
   }

@@ -1,15 +1,15 @@
-# Proyecto Kofu [Mobile] 🤖
+# Aura [Rama `kofu-go`] 🧠
 
 <p align="center">
-  <img src="assets/images/banner.jpeg" alt="Proyecto Kofu Mobile Banner" width="90%" style="border-radius: 14px; box-shadow: 0 10px 30px rgba(0,0,0,0.15);">
+  <img src="assets/images/aura_logo.png" alt="Aura Logo" width="180" style="border-radius: 28px; box-shadow: 0 10px 30px rgba(0,0,0,0.15);">
 </p>
 
 <p align="center">
-  <a href="https://huggingface.co/shebxyd/kofu-v2-edge"><img src="https://img.shields.io/badge/🤗%20Hugging%20Face-shebxyd%2Fkofu--v2--edge-yellow?style=for-the-badge" alt="Hugging Face Model"></a>
-  <img src="https://img.shields.io/badge/Version-v2.1.5%20%5BEstable%5D-brightgreen?style=for-the-badge" alt="Version 2.1.5">
+  <a href="https://huggingface.co/shebxyd/aura-1b-edge"><img src="https://img.shields.io/badge/🤗%20Aura%201B%20(Gemma%203)-Q4__K__M%20(~769%20MiB)-yellow?style=for-the-badge" alt="Aura 1B Edge Q4_K_M"></a>
+  <img src="https://img.shields.io/badge/Branch-kofu--go%20%5B%3C%3D2GB%20Guard%5D-brightgreen?style=for-the-badge" alt="kofu-go Branch">
   <img src="https://img.shields.io/badge/Backend-C%2B%2B20%20NDK%20r26-00599C?style=for-the-badge&logo=cplusplus&logoColor=white" alt="C++20 NDK">
   <img src="https://img.shields.io/badge/UI-Jetpack%20Compose-4285F4?style=for-the-badge&logo=jetpackcompose&logoColor=white" alt="Jetpack Compose">
-  <img src="https://img.shields.io/badge/Android-8.0%2B-3DDC84?style=for-the-badge&logo=android&logoColor=white" alt="Android">
+  <img src="https://img.shields.io/badge/Android-5.0%2B%20(API%2021%2B)-3DDC84?style=for-the-badge&logo=android&logoColor=white" alt="Android 5.0+">
   <img src="https://img.shields.io/badge/Inference-GGUF%20%7C%20llama.cpp-FF6F00?style=for-the-badge&logo=cplusplus&logoColor=white" alt="Inference">
   <img src="https://img.shields.io/badge/Privacy-100%25%20On--Device-10B981?style=for-the-badge&logo=shield&logoColor=white" alt="Privacy">
   <img src="https://img.shields.io/badge/Architecture-ARM64--v8a-0091BD?style=for-the-badge&logo=arm&logoColor=white" alt="ARM64">
@@ -18,86 +18,78 @@
 
 ---
 
-## ⚡ ¿Qué es Kofu Mobile?
+## ⚡ ¿Qué es Aura (`kofu-go`)?
 
-**Kofu Mobile** es un asistente de Inteligencia Artificial para Android diseñado para funcionar de manera **100% autónoma y privada dentro de tu teléfono**, sin servidores en la nube, sin cuentas ni suscripciones, y sin transferir tus datos personales ni conversaciones a internet.
+**Aura** (desarrollada en la rama Git **`kofu-go`** del proyecto base) es la edición educativa y optimizada diseñada para ejecutarse **100% offline en dispositivos Android de gama de entrada y gama media (3–6 GB de RAM)** manteniendo el presupuesto combinado de **modelo 4-bit + caché KV + bases de datos RAG + runtime Android** estrictamente por debajo de **2 GB** (`LMK Guard` con techo de `VmRSS <= 1850 MB`) para evitar terminaciones por el **Android Low Memory Killer (`lmkd`)**.
 
-A diferencia de clientes de chat convencionales que se conectan a APIs externas (como ChatGPT o Claude) o soluciones que requieren instalar entornos Linux complejos (como Termux o PRoot), **Kofu Mobile ejecuta modelos de lenguaje de última generación optimizados para dispositivos móviles (Edge LLMs de 1B a 2.5B de parámetros) directamente sobre el procesador, GPU o NPU de tu teléfono**. Una vez descargado el modelo, puedes dialogar con Kofu incluso en **Modo Avión**.
-
-## 🏛️ Arquitectura Desacoplada: C++20 + Kotlin Compose
-
-Para garantizar la máxima velocidad de inferencia sin comprometer la fluidez de la interfaz, el proyecto divide sus responsabilidades de forma estricta:
-
-```
-┌─────────────────────────────────────────────────────────────┐
-│             CAPA ESTÉTICA Y DE USUARIO (Kotlin)             │
-│  - Jetpack Compose UI (Material 3 reactivo)                 │
-│  - Gestión de temas (Claro / Oscuro / Sistema)              │
-│  - Estados de conversación y chips de sugerencias           │
-│  - Descarga HTTPS en segundo plano (OkHttp + Coroutines)    │
-└──────────────────────────────┬──────────────────────────────┘
-                               │ JNI (Java Native Interface)
-                               ▼
-┌─────────────────────────────────────────────────────────────┐
-│             MOTOR DE COMPUTACIÓN NATIVO (C++20)             │
-│  - Carga y mapeo en memoria sin copia (Zero-Copy mmap)      │
-│  - Validación de integridad binaria (Magic Numbers)         │
-│  - Sanitización de prompts y prevención de inyecciones       │
-│  - Pipeline de inferencia y streaming token por token       │
-│  - Monitoreo de memoria en tiempo real (/proc/self/statm)   │
-└─────────────────────────────────────────────────────────────┘
-```
-
-1. **Capa Nativa en C++20 (`libkofu_engine.so`):**
-   - **Rendimiento extremo:** Todo el procesamiento pesado de tensores, cálculo matemático, formateo de plantillas (Gemma Turn, ChatML) y gestión de memoria reside exclusivamente en código C++20 nativo compilado con Android NDK r26 y CMake.
-   - **Zero-Copy Memory Mapping (`mmap`):** Los archivos de modelos (de 1 a 2.5 GB) se mapean directamente desde el sistema de archivos a la memoria virtual mediante llamadas de sistema POSIX, reduciendo a cero el tiempo de copia y optimizando la RAM física.
-   - **Seguridad en Prompts:** Filtro de desinfección nativo que neutraliza caracteres de escape maliciosos o tokens de control del sistema (`<start_of_turn>`, `<|eot_id|>`).
-
-2. **Capa Visual y Estética en Kotlin (Jetpack Compose):**
-   - **Experiencia moderna y fluida:** Diseñada íntegramente con componentes declarativos de Jetpack Compose y animaciones reactivas.
-   - **Gestión reactiva de flujo:** Recibe los tokens generados por el motor C++ mediante `Flow<String>` de Kotlin Coroutines, proyectando el texto en pantalla de forma instantánea.
+A diferencia de clientes conectados a la nube o soluciones con entornos Linux complejos (Termux/PRoot), Aura ejecuta **Google Gemma 3 1B IT (`Q4_K_M`)** directamente sobre `llama.cpp` en C++20/ARM64 con prioridad **GPU → NPU → CPU** junto con un motor RAG híbrido ligero (`SQLite FTS4 + BM25 + embeddings int8`) con identidad de **Aura** y base de conocimientos escolares (programación, matemáticas, ortografía y gramática del español, ciencias naturales e historia), incluso en **Modo Avión**.
 
 ---
 
-## 🧠 ¿Cómo Funciona Kofu Mobile? (Paso a Paso)
+## 🏛️ Arquitectura Optimizada <= 2 GB: C++20 + Kotlin Compose
 
-```mermaid
-flowchart TD
-    A["📱 Inicio de Kofu Assistant"] --> B{"¿Existe el modelo local en el dispositivo?"}
-    B -- "No" --> C["📥 Descarga automática desde Hugging Face\n(shebxyd/kofu-2b-edge)"]
-    B -- "Sí (o importado con botón '+')" --> D["🛡️ Validación de Cabecera Binaria en C++"]
-    C --> D
-    D -- "Firma 'GGUF' (Q4_K_M)" --> E["⚡ Motor Nativo GGUF en C++\n(Inferencia acelerada en CPU ARM64)"]
-    D -- "Firma 'TFL3' / LiteRT" --> F["🚀 Motor LiteRT C++\n(Aceleración por GPU / NPU)"]
-    E --> G["💬 Usuario envía un mensaje en el Chat"]
-    F --> G
-    G --> H["🧹 C++ PromptFormatter:\nSanitización + Plantilla <start_of_turn>"]
-    H --> I["🌊 Streaming nativo token por token\nhacia la interfaz de Compose"]
+```text
+┌──────────────────────────────────────────────────────────────────────┐
+│               CAPA VISUAL Y REACTIVA (Kotlin / Compose)              │
+│  - Jetpack Compose UI con throttling ~80 ms y cacheo de bloques ```  │
+│  - Animación de aparición suave: entrada de burbuja + fade de tokens │
+│  - Detección automática de RAM total (MemTotal <= 6 GB -> <=2GB)     │
+│  - Descarga principal (Foreground Service) + micro-embedder detrás   │
+└──────────────────────────────────┬───────────────────────────────────┘
+                                   │ JNI (Zero-Copy DirectByteBuffer)
+                                   ▼
+┌──────────────────────────────────────────────────────────────────────┐
+│               MOTOR NATIVO C++20 (libkofu_engine.so)                 │
+│  - Zero-Copy mmap real (use_extra_bufts=false bajo <= 2 GB)          │
+│  - KV Cache cuantizada Q8_0/Q8_0 (swa_full=true para Gemma ISWA)     │
+│  - Topología adaptativa para SoCs 2+6 / 4+4 y prefijo KV multi-turno │
+│  - LMK Guard cada 8 tokens (VmRSS <= 1850 MB, RssAnon, MemAvailable) │
+│  - Micro-embedder GGUF + producto punto int8 acelerado por NEON      │
+└──────────────────────────────────────────────────────────────────────┘
 ```
 
-### 1. Detección y Descarga Automática del Modelo Oficial
-Al iniciar por primera vez, [`LlamaRepository`](Kofu_Assistant/app/src/main/java/com/kofu/assistant/repository/LlamaRepository.kt) comprueba el almacenamiento del dispositivo:
-* **Si el modelo ya existe:** Se inicializa de inmediato a través del motor C++ mediante `mmap` en menos de 100 milisegundos.
-* **Si no existe:** Se conecta de forma segura a Hugging Face para descargar automáticamente el modelo oficial del proyecto mediante un `Foreground Service` persistente con soporte de reanudación:
-  * **Modelo Oficial Predeterminado (v2.1):** [`shebxyd/kofu-v2-edge`](https://huggingface.co/shebxyd/kofu-v2-edge) — Archivo: `kofu-v2-edge-q4_k_m.gguf` (~1.6 GB, basado en Google Gemma 2 2B Instruct).
-  * **Modelo Ultraligero:** [`shebxyd/kofu-2b-edge`](https://huggingface.co/shebxyd/kofu-2b-edge) — Archivo: `kofu-gemma-2b-edge-q4_k_m.gguf` (~1.4 GB, basado en Gemma 1 2B).
-  * **Modelo Pro (12GB+ RAM):** [`shebxyd/kofu-gemma4-edge`](https://huggingface.co/shebxyd/kofu-gemma4-edge) — Archivo: `kofu-gemma4-edge-q4_k_m.gguf` (~5.3 GB).
-* **Carga manual (Botón `+`):** Si ya cuentas con un archivo `.gguf`, `.litertlm` o `.task` en la memoria de tu teléfono, puedes cargarlo directamente tocando el botón `+`.
+### Pilares Implementados en `kofu-go`
 
-### 2. Verificación de Seguridad Binaria (*Magic Numbers*)
-Para evitar bloqueos o fallos de segmentación si un usuario intenta abrir un archivo incompleto o renombrado incorrectamente, el cargador nativo [`model_loader.cpp`](Kofu_Assistant/app/src/main/cpp/src/model_loader.cpp) inspecciona los primeros bytes del archivo antes de reservarlo en RAM:
-* **Cabecera GGUF:** Comprueba la presencia del número mágico `0x46554747` (`GGUF` en Little Endian) y valida la versión de formato.
-* **Cabecera LiteRT / FlatBuffers:** Comprueba la signatura `TFL3` o el contenedor empaquetado de MediaPipe.
+1. **Zero-Copy `mmap` Real y Caché KV Cuantizada (`Q8_0`):**
+   - En dispositivos bajo presupuesto `<= 2 GB` (`NODE_7NM_LEGACY` o `MemTotal <= 6144 MB` dentro de esta rama), [`kofu_engine.cpp`](Kofu_Assistant/app/src/main/cpp/src/kofu_engine.cpp) desactiva el weight repacking en memoria anónima (`mparams.use_extra_bufts = false`) para que los pesos `Q4_K_M` (~806 MB) permanezcan en páginas `mmap` limpias y evictables sin inflar `RssAnon`.
+   - La caché KV se configura en **`Q8_0/Q8_0`** (con respaldo automático `Q8_0/F16`) y `n_ctx` adaptativo (`1536 / 1024 / 512`), preservando `swa_full = true` en arquitecturas Gemma/ISWA para mantener *Context Shifting* y reutilización de prefijo KV.
+2. **Cascada GPU → NPU → CPU y Gobernador Debug 70–80 % RAM:**
+   - El motor nativo prioriza descarga parcial/total a **GPU** (OpenCL/Vulkan si el SoC es compatible) y cae automáticamente a **NPU/CPU** con doble pool de hilos (`batch_thr` / `decode_thr`) y precalentamiento del prefijo del sistema en caché KV.
+   - En compilaciones **`debug`** (`BuildConfig.DEBUG`), el gobernador de RAM monitorea `VmRSS` respecto al límite: al superar el **70 %** introduce frenado suave (`25 ms`), al superar el **80 %** frenado fuerte (`75 ms`) y en el techo **100 %** detiene la generación antes de un *kill* del sistema. En **`release`** solo actúa el guarda crítico final.
+   - Verificación *preflight* antes del `prefill` y vigilancia cada **8 tokens** en generación sobre `MemAvailable`, `RssAnon` y `VmRSS` (techo `1850 MB`).
+   - En [`MainActivity.kt`](Kofu_Assistant/app/src/main/java/com/kofu/assistant/MainActivity.kt), `onTrimMemory()` libera el micro-embedder y la caché vectorial en niveles moderados/bajos sin interrumpir la respuesta en curso, reservando la cancelación para niveles críticos.
+3. **RAG Híbrido Ligero + Micro-Embedder Secundario:**
+   - [`KofuRagDatabase.kt`](Kofu_Assistant/app/src/main/java/com/kofu/assistant/data/rag/KofuRagDatabase.kt) combina **SQLite FTS4 + BM25** (omitiendo la reescritura al arrancar cuando coincide el hash en `rag_meta`, con caché SQLite acotada a ~1 MB) y vectores `int8` en **`DirectByteBuffer`** fuera del heap de ART, evaluados desde C++ NEON mediante `nativeScoreInt8CosineDirect` y fusionados con **RRF** (*Reciprocal Rank Fusion*).
+   - [`LlamaRepository.kt`](Kofu_Assistant/app/src/main/java/com/kofu/assistant/repository/LlamaRepository.kt) descarga el micro-embedder `all-MiniLM-L6-v2-Q8_0.gguf` (~24 MB) automáticamente en segundo plano **detrás** de que el modelo principal esté listo, operando con respaldo transparente `BM25-only` si no hay red o si se libera por memoria.
+   - [`HallucinationGuard.kt`](Kofu_Assistant/app/src/main/java/com/kofu/assistant/data/rag/HallucinationGuard.kt) acota temperatura (`<= 0.35f` con RAG) y anexa `[CONTEXTO VERIFICADO]` al final del turno para maximizar la reutilización del prefijo KV.
+4. **UI Fluida con Animación de Aparición:**
+   - [`ChatScreen.kt`](Kofu_Assistant/app/src/main/java/com/kofu/assistant/ui/ChatScreen.kt) aplica throttling de UI (~80 ms), cachea bloques de código ```` ``` ```` ya cerrados para evitar re-evaluar `Regex` en cada token, anima la entrada de nuevas burbujas en GPU (`graphicsLayer`) y usa `StreamingAppearanceText` para conservar sólidas las palabras previas mientras desvanece suavemente (`110 ms`) solo el fragmento recién llegado.
 
-### 3. Inferencia y Conversación en Streaming
-Al enviar un prompt:
-1. El formateador en C++ estructura la conversación según la plantilla oficial de Gemma:
-   ```text
-   <start_of_turn>user
-   {Pregunta del usuario}<end_of_turn>
-   <start_of_turn>model
-   ```
-2. El bucle nativo genera cada token y lo notifica a la capa de Kotlin vía JNI mediante callbacks sin sobrecarga, permitiendo una experiencia de escritura en tiempo real.
+---
+
+## 🤖 Catálogo de Modelos 4-bit en Aura (`kofu-go`)
+
+| ID | Modelo | Cuantización | Tamaño | Uso en `kofu-go` |
+| :--- | :--- | :--- | :--- | :--- |
+| **`kofu-go-1b`** *(Predeterminado)* | [`shebxyd/aura-1b-edge`](https://huggingface.co/shebxyd/aura-1b-edge) *(base Google Gemma 3 1B IT)* | `Q4_K_M` (4-bit) | **~769 MiB (`806 MB`)** | **Modelo principal Edge** entrenado para Aura (identidad + escolar) bajo umbral <= 2 GB |
+| **`kofu-embed-minilm`** *(Secundario)* | [`second-state/All-MiniLM-L6-v2-Embedding-GGUF`](https://huggingface.co/second-state/All-MiniLM-L6-v2-Embedding-GGUF) | `Q8_0` | **~24 MB** | Micro-embedder descargado detrás del modelo principal para RAG semántico `int8` |
+| **`kofu-v2`** | [`shebxyd/kofu-v2-edge`](https://huggingface.co/shebxyd/kofu-v2-edge) | `Q4_K_M` (4-bit) | ~1.6 GB | Opcional para dispositivos de 6–8 GB+ RAM |
+| **`kofu-2b`** | [`shebxyd/kofu-2b-edge`](https://huggingface.co/shebxyd/kofu-2b-edge) | `Q4_K_M` (4-bit) | ~1.4 GB | Alternativa Gemma 1 2B |
+| **`kofu-gemma4`** | [`shebxyd/kofu-gemma4-edge`](https://huggingface.co/shebxyd/kofu-gemma4-edge) | `Q4_K_M` (4-bit) | ~5.3 GB | Modo Pro Flagship (12 GB+ RAM) |
+
+Además, puedes importar cualquier archivo `.gguf`, `.litertlm`, `.tflite`, `.task` o `.bin` local mediante el botón de selector de modelos o vía consola ADB (`KofuConsoleReceiver`).
+
+---
+
+## 📱 Ediciones (`productFlavors`) y Presupuesto de Recursos
+
+| Edición (`productFlavor`) | Rango Android | Nodo e ISA ARMv8 | Configuración en rama `kofu-go` |
+| :--- | :--- | :--- | :--- |
+| **`node7nm`** *(Objetivo principal Aura / `kofu-go`)* | Android 5.0+ (API 21+) | `armv8-a` universal (sin DotProd/i8mm) | `Aura 1B (Gemma 3 Q4_K_M)`, `n_ctx <= 1536` (`Q8_0`), `n_batch <= 256`, `1` chunk RAG (`<=280 chars`), `VmRSS <= 1850 MB` |
+| **`node5nm`** *(Mainstream)* | Android 8.0+ (API 26+) | `armv8.2-a+dotprod+fp16` | `Gemma 3 1B Q4_K_M` por defecto en `kofu-go`, presupuesto `<= 2 GB` activo en `MemTotal <= 6 GB`, hasta `640 tok` |
+| **`frontierSub5nm`** *(Frontera)* | Android 14+ (API 34+) | `armv8.6-a+dotprod+fp16+i8mm` | `Kofu 4.0 Pro`, `n_ctx` hasta `4096`, `n_batch=1024`, hasta `6` hilos, máx `2048 tok` |
+
+En esta rama, [`release.yml`](.github/workflows/release.yml) compila manualmente (`workflow_dispatch`) los APKs `node7nm` (`release` con R8/shrinkResources y `debug`) tras ejecutar `testNode7nmDebugUnitTest`.
 
 ---
 
@@ -105,120 +97,79 @@ Al enviar un prompt:
 
 ```text
 Kofu_Mobile/
-├── .github/
-│   └── workflows/
-│       └── release.yml              # CI/CD automatizado: compilación NDK y release en GitHub
-├── assets/
-│   ├── images/
-│   │   ├── banner.jpeg              # Banner horizontal del proyecto
-│   │   └── kofu_character.png       # Arte del personaje Kofu
-│   └── huggingface_v2/
-│       ├── banner.jpeg              # Banner oficial para Hugging Face Hub
-│       ├── README.md                # Model Card oficial para HF Hub (Gemma 2)
-│       └── LICENSE                  # Términos de licencia Gemma
-├── Kofu_Assistant/
-│   └── app/
-│       ├── build.gradle.kts         # Configuración NDK 26, CMake 3.22 y AAPT noCompress
-│       └── src/main/
-│           ├── AndroidManifest.xml  # Configuración y permisos mínimos (INTERNET y Foreground Service)
-│           ├── cpp/                 # ⚙️ MOTOR NATIVO C++20
-│           │   ├── CMakeLists.txt   # Script de construcción nativa Android NDK
-│           │   ├── llama.cpp/       # Motor embebido de inferencia tensor GGUF ARM64
-│           │   ├── include/
-│           │   │   ├── kofu_engine.hpp      # Interfaz del motor nativo de inferencia
-│           │   │   ├── model_loader.hpp     # Cargador y validador de cabeceras binarias
-│           │   │   └── prompt_formatter.hpp # Sanitizador y formateador de plantillas Gemma
-│           │   └── src/
-│           │       ├── kofu_engine.cpp      # Implementación del ciclo de inferencia y benchmarks
-│           │       ├── model_loader.cpp     # Validación binaria rápida de cabeceras
-│           │       ├── prompt_formatter.cpp # Lógica de seguridad contra prompt injection
-│           │       └── kofu_jni.cpp         # Puente JNI que expone funciones a Kotlin
-│           └── java/com/kofu/assistant/
-│               ├── MainActivity.kt             # Ciclo de vida y tema visual
-│               ├── data/
-│               │   ├── AppUpdateManager.kt     # Verificador y gestor de actualizaciones GitHub Releases
-│               │   └── ChatCacheManager.kt     # Persistencia atómica de conversaciones (AtomicFile)
-│               ├── repository/
-│               │   ├── KofuNativeEngine.kt     # Enlace JNI con libkofu_engine.so
-│               │   ├── LlamaRepository.kt      # Gestor de modelos, inferencia y telemetría
-│               │   └── OllamaClient.kt         # Cliente HTTP de inferencia para Ollama
-│               ├── service/
-│               │   └── ModelDownloadService.kt # Foreground Service con soporte de reanudación
-│               └── ui/
-│                   ├── ChatScreen.kt           # Vista del chat, chips y streaming reactivo
-│                   ├── components/
-│                   │   ├── DebugHud.kt         # HUD de telemetría de rendimiento y memoria
-│                   │   ├── SettingsDialog.kt   # Diálogo de ajustes y botón de actualización
-│                   │   └── TermsDialog.kt      # Términos de uso y privacidad
-│                   └── theme/
-│                       └── KofuTheme.kt        # Paleta estética moderna (Dark, OLED, Light)
-├── dist/                                    # Binarios APK listos para distribución
-├── LICENSE                                  # Licencia MIT
-└── README.md                                # Documentación técnica completa
+├── .github/workflows/release.yml            # CI manual (workflow_dispatch) para Aura (rama kofu-go) node7nm
+├── docs/designs/kofu-go.md                  # Especificación técnica de Kofu Go
+├── Kofu_Assistant/app/
+│   ├── build.gradle.kts                     # Flavors node7nm / node5nm / frontierSub5nm, NDK r26, R8 release
+│   ├── proguard-rules.pro                   # Reglas -keep para JNI, callbacks y JSON
+│   └── src/
+│       ├── main/
+│       │   ├── assets/rag/kofu_knowledge_shards.json
+│       │   ├── cpp/                         # Motor nativo C++20 + llama.cpp embebido
+│       │   │   ├── CMakeLists.txt
+│       │   │   ├── include/{kofu_engine.hpp,model_loader.hpp,prompt_formatter.hpp,kofu_api21_compat.h}
+│       │   │   └── src/{kofu_engine.cpp,kofu_jni.cpp,model_loader.cpp,prompt_formatter.cpp}
+│       │   └── java/com/kofu/assistant/
+│       │       ├── MainActivity.kt          # Detección de RAM total + onTrimMemory escalonado
+│       │       ├── data/
+│       │       │   ├── KofuEditionProfile.kt
+│       │       │   ├── ChatCacheManager.kt  # Persistencia atómica (kofu_chats_cache.json)
+│       │       │   ├── AppUpdateManager.kt
+│       │       │   └── rag/{KofuRagDatabase.kt,HallucinationGuard.kt,KofuBenchmark500Suite.kt}
+│       │       ├── repository/{KofuNativeEngine.kt,LlamaRepository.kt,OllamaClient.kt}
+│       │       ├── service/{ModelDownloadService.kt,KofuConsoleReceiver.kt}
+│       │       └── ui/{ChatScreen.kt,components/*,theme/KofuTheme.kt}
+│       └── test/java/com/kofu/assistant/
+│           ├── KofuLogicTest.kt
+│           └── KofuRagAnd500StressTest.kt
+├── LICENSE
+└── README.md
 ```
 
 ---
 
-## 🤖 Modelo Oficial: `shebxyd/kofu-v2-edge` (v2.1)
+## 📱 Requisitos del Dispositivo (`kofu-go`)
 
-El modelo predeterminado de Kofu es una versión especializada basada en **Google Gemma 2 2B IT** entrenada con **LoRA** (*Low-Rank Adaptation*) sobre tareas multidisciplinarias:
-* 💻 **Programación y Algoritmos:** Generación y depuración de código en C++, Python, Kotlin y Web.
-* 🧪 **Razonamiento Científico:** Matemáticas, ciencias y lógica estructurada.
-* 🇪🇸 **Español Nativo Fluido:** Explicaciones claras, sintéticas, amables y precisas.
-* 📦 **Cuantización Q4_K_M:** Reducción a ~1.6 GB con máxima preservación de razonamiento, ideal para móviles con 6 GB a 8 GB de memoria RAM.
-* 🔗 **Modelos Disponibles en Hugging Face:**
-  - [`shebxyd/kofu-v2-edge`](https://huggingface.co/shebxyd/kofu-v2-edge) *(Predeterminado / Recomendado, Gemma 2 2B)*
-  - [`shebxyd/kofu-2b-edge`](https://huggingface.co/shebxyd/kofu-2b-edge) *(Modo Ultraligero, Gemma 1 2B)*
-  - [`shebxyd/kofu-gemma4-edge`](https://huggingface.co/shebxyd/kofu-gemma4-edge) *(Modo Pro Flagship 12GB+ RAM, Gemma 4 E4B)*
-
----
-
-## 📱 Ediciones Especializadas por Nodo Tecnológico (GitHub Actions CI/CD)
-
-Para maximizar la compatibilidad desde Android 5.0 hasta teléfonos insignia de frontera (Android 16+) y aprovechar cada microarquitectura ARMv8 sin `SIGILL` ni desbordes de RAM, **Kofu Mobile** compila **3 ediciones especializadas** en GitHub Actions:
-
-| Edición (`productFlavor`) | Rango Android | Nodo e ISA ARMv8 | Tarea de IA Especializada | Normalización de Recursos |
-| :--- | :--- | :--- | :--- | :--- |
-| **`node7nm`** *(Legacy)* | Android 5.0 – 7.x (API 21+) | `7nm–14nm` • `armv8-a` universal (sin DotProd/i8mm) | **Síntesis Ultraligera y Consulta Factual Rápida** | `Kofu 1.0 Lite`, `n_ctx <= 1024`, `n_batch=128`, máx `384 tok`, temp `0.25`, `1` chunk RAG (`<=280 chars`), LMK guard `180 MB` |
-| **`node5nm`** *(Mainstream)* | Android 8.0 – 15.0 (API 26–35) | `5nm / 4nm` • `armv8.2-a+dotprod+fp16` (Kryo Prime+Perf) | **Ingeniería de Software, Código y Asistencia Técnica** | `Kofu 2.0 Edge`, `n_ctx` adaptativo (`1024–4096`), `n_batch=512`, máx `1024 tok`, `2` chunks RAG (`<=480 chars`), LMK guard `120 MB` |
-| **`frontierSub5nm`** *(Frontera)* | Android 16+ Flagship (API 34–36+) | `<5nm (3nm/2nm)` • `armv8.6-a+dotprod+fp16+i8mm` | **Razonamiento Profundo, Ciencia Avanzada y Contexto Largo** | `Kofu 4.0 Pro` (fallback automático a `2.0`), `n_ctx` hasta `4096`, `n_batch=1024`, hasta `6` hilos, máx `2048 tok`, `3` chunks RAG (`<=720 chars`) |
-
----
-
-## 📱 Requisitos del Dispositivo
-
-| Requisito | Mínimo | Recomendado |
+| Requisito | Mínimo (Gama Entrada) | Recomendado (Gama Media) |
 | :--- | :--- | :--- |
-| **Sistema Operativo** | Android 8.0 (API 26) | Android 12+ (API 31+) |
-| **Arquitectura de CPU** | ARM64 (`arm64-v8a`) | ARMv8.2-A / ARMv9 con extensiones DotProd / FP16 |
-| **Memoria RAM Física** | **6 GB** | **8 GB o más** |
-| **Almacenamiento Libre** | 2.5 GB libres | 4 GB libres (para modelos adicionales) |
-| **Conexión de Red** | Solo requerida una vez para descargar el modelo inicial | Completamente innecesaria para operar |
+| **Sistema Operativo** | Android 5.0 (API 21, sabor `node7nm`) | Android 8.0+ (API 26+) |
+| **Arquitectura de CPU** | ARM64 (`arm64-v8a`) | ARM64 con extensiones DotProd / FP16 |
+| **Memoria RAM Física** | **3–4 GB** *(respetando techo <= 2 GB)* | **4–6 GB o más** |
+| **Almacenamiento Libre** | 1.5 GB libres (`~806 MB` modelo + `~24 MB` embedder) | 2.5 GB libres |
+| **Conexión de Red** | Solo para descarga inicial de pesos | Completamente innecesaria para operar |
 
 ---
 
-## 🛠️ Compilación y Desarrollo
+## 🛠️ Compilación, Pruebas y Benchmark ADB
 
 ### Requisitos Previos
-* **Android Studio Hedgehog (2023.1.1) o superior**
 * **Android SDK:** API Level 34
-* **Android NDK:** Versión `26.1.10909125`
-* **CMake:** Versión `3.22.1`
+* **Android NDK:** `26.1.10909125`
+* **CMake:** `3.22.1`
 * **JDK:** Java 17
 
-### Pasos de Compilación
-1. Clona el repositorio:
+### Comandos Principales
+
+1. **Ejecutar pruebas unitarias y suite de estrés RAG de 500 preguntas:**
    ```bash
-   git clone https://github.com/Kineyo/Kofu_Mobile.git
-   cd Kofu_Mobile/Kofu_Assistant
+   cd Kofu_Assistant
+   ./gradlew testNode7nmDebugUnitTest testNode5nmDebugUnitTest
    ```
-2. Compila el APK de depuración con NDK y C++:
+2. **Compilar APK de Aura (`node7nm`, rama `kofu-go`):**
    ```bash
-   ./gradlew assembleDebug
+   ./gradlew assembleNode7nmDebug
+   # O versión release optimizada con R8:
+   ./gradlew assembleNode7nmRelease
    ```
-3. El archivo APK resultante se ubica en:
+3. **Ubicación del APK generado:**
    ```text
-   app/build/outputs/apk/debug/app-debug.apk
+   Kofu_Assistant/app/build/outputs/apk/node7nm/debug/app-node7nm-debug.apk
+   Kofu_Assistant/app/build/outputs/apk/node7nm/release/app-node7nm-release.apk
+   ```
+4. **Benchmark en dispositivo vía ADB (`KofuConsoleReceiver`):**
+   ```bash
+   adb shell 'am broadcast -n com.kofu.assistant/.service.KofuConsoleReceiver -a com.kofu.assistant.ACTION_CONSOLE_STATUS'
+   adb shell 'am broadcast -n com.kofu.assistant/.service.KofuConsoleReceiver -a com.kofu.assistant.ACTION_CONSOLE_STRESS_500 --ei count 500 --ez full_llm true'
    ```
 
 ---
@@ -226,4 +177,4 @@ Para maximizar la compatibilidad desde Android 5.0 hasta teléfonos insignia de 
 ## 📄 Licencia
 
 Este proyecto está distribuido bajo la licencia **MIT**. Consulta el archivo [`LICENSE`](LICENSE) para más detalles.
-Los pesos del modelo Gemma se rigen por los [Términos de Uso de Google Gemma](https://ai.google.dev/gemma/terms).
+Los pesos de Google Gemma se rigen por los [Términos de Uso de Google Gemma](https://ai.google.dev/gemma/terms).

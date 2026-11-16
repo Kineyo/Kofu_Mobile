@@ -60,7 +60,7 @@ object ChatCacheManager {
                 messages = mutableListOf(
                     ChatMessageData(
                         sender = "KOFU",
-                        text = "Inferencia local activa con llama.cpp ARM64. Modelo listo para consultas.",
+                        text = "Aura activa 100% offline con llama.cpp ARM64. Lista para ayudarte con tus materias.",
                         isSystemNotice = true
                     )
                 )
@@ -120,7 +120,7 @@ object ChatCacheManager {
                     messages = mutableListOf(
                         ChatMessageData(
                             sender = "KOFU",
-                            text = "Inferencia local activa con llama.cpp ARM64. Modelo listo para consultas.",
+                            text = "Aura activa 100% offline con llama.cpp ARM64. Lista para ayudarte con tus materias.",
                             isSystemNotice = true
                         )
                     )

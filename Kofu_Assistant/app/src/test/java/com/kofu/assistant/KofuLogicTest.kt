@@ -1,6 +1,10 @@
 package com.kofu.assistant
 
 import com.kofu.assistant.data.AppUpdateManager
+import com.kofu.assistant.data.rag.HallucinationGuard
+import com.kofu.assistant.data.rag.RagDocument
+import com.kofu.assistant.data.rag.RagDomain
+import com.kofu.assistant.data.rag.RagRetrievalResult
 import com.kofu.assistant.repository.LlamaRepository
 import com.kofu.assistant.repository.TurnMessage
 import org.junit.Assert.assertEquals
@@ -55,5 +59,37 @@ class KofuLogicTest {
 
         val filtered = LlamaRepository.filterInferenceHistory(rawHistory, welcome)
         assertTrue(filtered.isEmpty())
+    }
+
+    @Test
+    fun `getExpectedMinSize accepts gemma3 1b sub-1GB model and micro-embedder`() {
+        val goModel = LlamaRepository.AVAILABLE_MODELS.first { it.id == "kofu-go-1b" }
+        assertTrue(goModel.fileName.contains("aura-1b-edge-q4_k_m"))
+        assertTrue(goModel.downloadUrl.contains("shebxyd/aura-1b-edge"))
+        assertTrue(LlamaRepository.AVAILABLE_MODELS.none { it.fileName.contains("qwen", ignoreCase = true) })
+        assertEquals(650_000_000L, LlamaRepository.getExpectedMinSize(goModel))
+        assertEquals(15_000_000L, LlamaRepository.getExpectedMinSize(LlamaRepository.EMBEDDER_MODEL))
+    }
+
+    @Test
+    fun `prepareGroundedPrompt places user query before verified context to preserve KV prefix`() {
+        val doc = RagDocument("doc1", RagDomain.AI_EDGE, "KV Q8", "kv", "Cuantización Q8_0")
+        val rag = RagRetrievalResult(
+            domain = RagDomain.AI_EDGE,
+            matchedChunks = listOf(doc),
+            formattedContext = "- KV Q8: Cuantización Q8_0",
+            lookupTimeMs = 2,
+            estimatedTokens = 10,
+            topScore = 2.0
+        )
+        val grounded = HallucinationGuard.prepareGroundedPrompt(
+            userQuery = "¿Cómo ahorro RAM en KV?",
+            ragResult = rag,
+            baseTemperature = 0.7f,
+            baseSystemPrompt = "Eres Kofu."
+        )
+        assertTrue(grounded.augmentedUserPrompt.startsWith("¿Cómo ahorro RAM en KV?"))
+        assertTrue(grounded.augmentedUserPrompt.contains("[CONTEXTO VERIFICADO"))
+        assertEquals("Eres Kofu.", grounded.effectiveSystemPrompt)
     }
 }

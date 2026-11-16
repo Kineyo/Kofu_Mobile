@@ -116,6 +116,7 @@ class KofuRagAnd500StressTest {
         val frontier = KofuEditionProfile.fromCode("FRONTIER_SUB5NM")
 
         assertEquals(SiliconEdition.NODE_7NM_LEGACY, legacy)
+        assertEquals("kofu-go-1b", legacy.defaultModelId)
         assertEquals(SiliconEdition.NODE_5NM_MAINSTREAM, mainstream)
         assertEquals(SiliconEdition.FRONTIER_SUB5NM, frontier)
 
@@ -123,13 +124,47 @@ class KofuRagAnd500StressTest {
         assertTrue(mainstream.defaultMaxTokens < frontier.defaultMaxTokens)
         assertTrue(legacy.maxRagContextChars < mainstream.maxRagContextChars)
         assertTrue(mainstream.maxRagContextChars < frontier.maxRagContextChars)
+
+        KofuEditionProfile.configureForDeviceRam(4L * 1024L * 1024L * 1024L)
+        assertTrue(KofuEditionProfile.isStrict2GbBudgetActive)
+        assertEquals(1, KofuEditionProfile.effectiveMaxRagChunks)
+        assertEquals(180, KofuEditionProfile.effectiveMaxRagContextChars)
+        assertTrue(KofuEditionProfile.effectiveMaxTokens <= 256)
+    }
+
+    @Test
+    fun `rrf fusion combines bm25 and semantic rankings deterministically`() {
+        val d1 = com.kofu.assistant.data.rag.RagDocument("d1", RagDomain.AI_EDGE, "KV Cache", "kv", "Q8_0 KV")
+        val d2 = com.kofu.assistant.data.rag.RagDocument("d2", RagDomain.AI_EDGE, "LMK Guard", "lmk", "RssAnon")
+        val d3 = com.kofu.assistant.data.rag.RagDocument("d3", RagDomain.AI_EDGE, "Embedder", "rag", "MiniLM")
+
+        val bm25 = listOf(d1 to 2.4, d2 to 1.5)
+        val semantic = listOf(d2 to 0.85f, d3 to 0.72f, d1 to 0.10f)
+
+        val fused = KofuRagDatabase.computeRrfFusion(bm25, semantic, limit = 2)
+        assertEquals(2, fused.size)
+        assertEquals("d2", fused[0].first.id)
+        assertTrue(fused[0].second > fused[1].second)
+    }
+
+    @Test
+    fun `dataset hash is deterministic regardless of document order`() {
+        val d1 = com.kofu.assistant.data.rag.RagDocument("a", RagDomain.AI_EDGE, "T1", "k1", "C1")
+        val d2 = com.kofu.assistant.data.rag.RagDocument("b", RagDomain.CS_PROGRAMMING, "T2", "k2", "C2")
+        assertEquals(
+            KofuRagDatabase.computeDatasetHash(listOf(d1, d2)),
+            KofuRagDatabase.computeDatasetHash(listOf(d2, d1))
+        )
     }
 
     @Test
     fun `dynamic domain router classifies chitchat with zero overhead`() {
         assertEquals(RagDomain.CHITCHAT, DynamicDomainRouter.classify("Hola"))
         assertEquals(RagDomain.CHITCHAT, DynamicDomainRouter.classify("Hola Kofu"))
+        assertEquals(RagDomain.CHITCHAT, DynamicDomainRouter.classify("Hola Aura"))
         assertEquals(RagDomain.CHITCHAT, DynamicDomainRouter.classify("Muchas gracias"))
+        assertEquals(RagDomain.KOFU_SYSTEM, DynamicDomainRouter.classify("¿Quién eres y cómo te llamas?"))
+        assertEquals(RagDomain.GENERAL_FACTS_ES, DynamicDomainRouter.classify("Reglas de acentuación en español agudas y esdrújulas"))
         assertEquals(RagDomain.CS_PROGRAMMING, DynamicDomainRouter.classify("Explica punteros y std::unique_ptr en C++20"))
         assertEquals(RagDomain.AI_EDGE, DynamicDomainRouter.classify("Cómo funciona el fallback NPU GPU CPU en Snapdragon llama.cpp"))
     }

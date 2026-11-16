@@ -255,7 +255,152 @@ Java_com_kofu_assistant_repository_KofuNativeEngine_nativeTrimMemory(
     JNIEnv* /*env*/,
     jobject /*thiz*/
 ) {
-    kofu::KofuEngine::instance().trim_memory();
+    kofu::KofuEngine::instance().trim_memory(80);
+}
+
+JNIEXPORT void JNICALL
+Java_com_kofu_assistant_repository_KofuNativeEngine_nativeTrimMemoryLevel(
+    JNIEnv* /*env*/,
+    jobject /*thiz*/,
+    jint level
+) {
+    kofu::KofuEngine::instance().trim_memory(static_cast<int>(level));
+}
+
+JNIEXPORT jboolean JNICALL
+Java_com_kofu_assistant_repository_KofuNativeEngine_nativeLoadEmbedModel(
+    JNIEnv* env,
+    jobject /*thiz*/,
+    jstring j_model_path
+) {
+    if (j_model_path == nullptr) return JNI_FALSE;
+    const char* path_chars = env->GetStringUTFChars(j_model_path, nullptr);
+    if (path_chars == nullptr) return JNI_FALSE;
+    std::string path(path_chars);
+    env->ReleaseStringUTFChars(j_model_path, path_chars);
+
+    bool ok = kofu::KofuEngine::instance().load_embed_model(path);
+    return ok ? JNI_TRUE : JNI_FALSE;
+}
+
+JNIEXPORT void JNICALL
+Java_com_kofu_assistant_repository_KofuNativeEngine_nativeUnloadEmbedModel(
+    JNIEnv* /*env*/,
+    jobject /*thiz*/
+) {
+    kofu::KofuEngine::instance().unload_embed_model();
+}
+
+JNIEXPORT jboolean JNICALL
+Java_com_kofu_assistant_repository_KofuNativeEngine_nativeIsEmbedModelLoaded(
+    JNIEnv* /*env*/,
+    jobject /*thiz*/
+) {
+    return kofu::KofuEngine::instance().is_embed_model_loaded() ? JNI_TRUE : JNI_FALSE;
+}
+
+JNIEXPORT jint JNICALL
+Java_com_kofu_assistant_repository_KofuNativeEngine_nativeGetEmbedDim(
+    JNIEnv* /*env*/,
+    jobject /*thiz*/
+) {
+    return static_cast<jint>(kofu::KofuEngine::instance().get_embed_dim());
+}
+
+JNIEXPORT jbyteArray JNICALL
+Java_com_kofu_assistant_repository_KofuNativeEngine_nativeEmbedTextInt8(
+    JNIEnv* env,
+    jobject /*thiz*/,
+    jstring j_text
+) {
+    if (j_text == nullptr) return nullptr;
+    const char* chars = env->GetStringUTFChars(j_text, nullptr);
+    if (chars == nullptr) return nullptr;
+    std::string text(chars);
+    env->ReleaseStringUTFChars(j_text, chars);
+
+    std::vector<int8_t> vec = kofu::KofuEngine::instance().embed_text_int8(text);
+    if (vec.empty()) return nullptr;
+
+    jbyteArray arr = env->NewByteArray(static_cast<jsize>(vec.size()));
+    if (!arr) return nullptr;
+    env->SetByteArrayRegion(arr, 0, static_cast<jsize>(vec.size()), reinterpret_cast<const jbyte*>(vec.data()));
+    return arr;
+}
+
+JNIEXPORT jfloatArray JNICALL
+Java_com_kofu_assistant_repository_KofuNativeEngine_nativeScoreInt8Cosine(
+    JNIEnv* env,
+    jobject /*thiz*/,
+    jbyteArray j_query_vec,
+    jbyteArray j_corpus_flat,
+    jint j_num_docs,
+    jint j_dim
+) {
+    if (j_query_vec == nullptr || j_corpus_flat == nullptr || j_num_docs <= 0 || j_dim <= 0) {
+        return nullptr;
+    }
+
+    jsize q_len = env->GetArrayLength(j_query_vec);
+    jsize c_len = env->GetArrayLength(j_corpus_flat);
+    if (q_len != j_dim || static_cast<int64_t>(c_len) < static_cast<int64_t>(j_num_docs) * static_cast<int64_t>(j_dim)) {
+        return nullptr;
+    }
+
+    std::vector<int8_t> q_vec(static_cast<size_t>(q_len));
+    env->GetByteArrayRegion(j_query_vec, 0, q_len, reinterpret_cast<jbyte*>(q_vec.data()));
+
+    jbyte* corpus_ptr = env->GetByteArrayElements(j_corpus_flat, nullptr);
+    if (corpus_ptr == nullptr) return nullptr;
+
+    std::vector<float> scores = kofu::KofuEngine::score_int8_cosine(
+        q_vec,
+        reinterpret_cast<const int8_t*>(corpus_ptr),
+        static_cast<int32_t>(j_num_docs),
+        static_cast<int32_t>(j_dim)
+    );
+    env->ReleaseByteArrayElements(j_corpus_flat, corpus_ptr, JNI_ABORT);
+
+    jfloatArray out = env->NewFloatArray(static_cast<jsize>(scores.size()));
+    if (!out) return nullptr;
+    env->SetFloatArrayRegion(out, 0, static_cast<jsize>(scores.size()), scores.data());
+    return out;
+}
+
+JNIEXPORT jfloatArray JNICALL
+Java_com_kofu_assistant_repository_KofuNativeEngine_nativeScoreInt8CosineDirect(
+    JNIEnv* env,
+    jobject /*thiz*/,
+    jbyteArray j_query_vec,
+    jobject j_corpus_direct,
+    jint j_num_docs,
+    jint j_dim
+) {
+    if (j_query_vec == nullptr || j_corpus_direct == nullptr || j_num_docs <= 0 || j_dim <= 0) {
+        return nullptr;
+    }
+
+    jsize q_len = env->GetArrayLength(j_query_vec);
+    void* direct_ptr = env->GetDirectBufferAddress(j_corpus_direct);
+    jlong cap = env->GetDirectBufferCapacity(j_corpus_direct);
+    if (q_len != j_dim || direct_ptr == nullptr || cap < static_cast<jlong>(j_num_docs) * static_cast<jlong>(j_dim)) {
+        return nullptr;
+    }
+
+    std::vector<int8_t> q_vec(static_cast<size_t>(q_len));
+    env->GetByteArrayRegion(j_query_vec, 0, q_len, reinterpret_cast<jbyte*>(q_vec.data()));
+
+    std::vector<float> scores = kofu::KofuEngine::score_int8_cosine(
+        q_vec,
+        reinterpret_cast<const int8_t*>(direct_ptr),
+        static_cast<int32_t>(j_num_docs),
+        static_cast<int32_t>(j_dim)
+    );
+
+    jfloatArray out = env->NewFloatArray(static_cast<jsize>(scores.size()));
+    if (!out) return nullptr;
+    env->SetFloatArrayRegion(out, 0, static_cast<jsize>(scores.size()), scores.data());
+    return out;
 }
 
 JNIEXPORT jstring JNICALL
@@ -274,6 +419,21 @@ Java_com_kofu_assistant_repository_KofuNativeEngine_nativeSetPreferredAccelerato
     jint mode
 ) {
     kofu::KofuEngine::instance().set_preferred_accelerator(static_cast<int>(mode));
+}
+
+JNIEXPORT void JNICALL
+Java_com_kofu_assistant_repository_KofuNativeEngine_nativeSetLowRamBudget(
+    JNIEnv* /*env*/,
+    jobject /*thiz*/,
+    jboolean j_enabled,
+    jlong j_max_rss_mb,
+    jboolean j_debug_governor
+) {
+    kofu::KofuEngine::instance().set_low_ram_budget(
+        j_enabled == JNI_TRUE,
+        static_cast<size_t>(std::max<jlong>(512, j_max_rss_mb)),
+        j_debug_governor == JNI_TRUE
+    );
 }
 
 } // extern "C"

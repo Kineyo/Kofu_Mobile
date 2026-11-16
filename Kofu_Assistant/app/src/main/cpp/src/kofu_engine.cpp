@@ -21,6 +21,7 @@
 
 #if defined(__aarch64__)
 #include <asm/hwcap.h>
+#include <arm_neon.h>
 #endif
 
 #define TAG "KofuEngine"
@@ -87,6 +88,19 @@ const char* tier_to_cstr(kofu::HardwareTier tier) {
     }
 }
 
+std::string build_system_prefix(const std::string& sys_prompt, kofu::PromptStyle style) {
+    const std::string clean = kofu::PromptFormatter::sanitize_input(sys_prompt);
+    if (clean.empty()) return "";
+    if (style == kofu::PromptStyle::GEMMA_4) {
+        return "<|turn>user\n" + clean + "\n\n";
+    } else if (style == kofu::PromptStyle::CHATML) {
+        return "<|im_start|>system\n" + clean + "<|im_end|>\n";
+    } else if (style == kofu::PromptStyle::LLAMA3) {
+        return "<|begin_of_text|><|start_header_id|>system<|end_header_id|>\n\n" + clean + "<|eot_id|>";
+    }
+    return "<start_of_turn>user\n" + clean + "\n\n";
+}
+
 } // namespace
 
 namespace kofu {
@@ -105,6 +119,7 @@ KofuEngine::KofuEngine() : loader_(std::make_unique<ModelLoader>()) {
 
 KofuEngine::~KofuEngine() {
     unload_model();
+    unload_embed_model();
 }
 
 void KofuEngine::detect_snapdragon_topology() {
@@ -177,6 +192,22 @@ size_t KofuEngine::get_process_rss_mb() {
     return (resident * static_cast<size_t>(page_size_kb)) / 1024;
 }
 
+size_t KofuEngine::get_process_anon_rss_mb() {
+    std::ifstream status("/proc/self/status");
+    if (!status.is_open()) return get_process_rss_mb();
+    std::string line;
+    while (std::getline(status, line)) {
+        if (line.rfind("RssAnon:", 0) == 0) {
+            std::istringstream iss(line.substr(8));
+            size_t kb = 0;
+            if (iss >> kb) {
+                return kb / 1024;
+            }
+        }
+    }
+    return get_process_rss_mb();
+}
+
 size_t KofuEngine::get_available_ram_mb() {
     std::ifstream meminfo("/proc/meminfo");
     if (!meminfo.is_open()) return 2048;
@@ -211,20 +242,32 @@ llama_context* KofuEngine::init_context_with_fallback(llama_model* model, Hardwa
     const std::string silicon_tier = KOFU_SILICON_TIER_STR;
     const bool is_7nm = (silicon_tier == "7NM");
     const bool is_frontier = (silicon_tier == "FRONTIER");
+    const bool low_ram = low_ram_mode_.load() || is_7nm;
 
     unsigned int hardware_threads = std::thread::hardware_concurrency();
     int32_t max_threads_cap = is_frontier ? 6 : 4;
     int32_t optimal_threads = 4;
-    if (!perf_core_ids_.empty()) {
-        optimal_threads = static_cast<int32_t>(std::min<size_t>(max_threads_cap, std::max<size_t>(2, perf_core_ids_.size())));
+    if (perf_core_ids_.size() >= 3) {
+        optimal_threads = static_cast<int32_t>(std::min<size_t>(max_threads_cap, perf_core_ids_.size()));
     } else if (hardware_threads > 0) {
+        // En SoCs gama media/entrada 2+6, usar hasta 4 hilos para saturar ancho de banda LPDDR4X
         optimal_threads = static_cast<int32_t>(std::min<unsigned int>(max_threads_cap, std::max(2u, hardware_threads / 2)));
     }
+    // Prefill paralelo: usar hasta todos los núcleos físicos disponibles (máx 8) para bajar TTFT
+    const int32_t batch_threads = (hardware_threads > 0)
+        ? static_cast<int32_t>(std::min<unsigned int>(8u, std::max<unsigned int>(static_cast<unsigned int>(optimal_threads), hardware_threads)))
+        : optimal_threads;
 
     const size_t avail_mb = get_available_ram_mb();
     std::vector<uint32_t> ctx_candidates;
-    if (is_7nm) {
-        ctx_candidates = (avail_mb >= 900) ? std::vector<uint32_t>{1024u, 512u} : std::vector<uint32_t>{512u};
+    if (low_ram) {
+        if (avail_mb >= 1400) {
+            ctx_candidates = {1536u, 1024u, 512u};
+        } else if (avail_mb >= 900) {
+            ctx_candidates = {1024u, 512u};
+        } else {
+            ctx_candidates = {512u};
+        }
     } else if (is_frontier) {
         ctx_candidates = (avail_mb >= 2200) ? std::vector<uint32_t>{4096u, 2048u, 1024u} : std::vector<uint32_t>{2048u, 1024u};
     } else {
@@ -237,51 +280,88 @@ llama_context* KofuEngine::init_context_with_fallback(llama_model* model, Hardwa
         }
     }
 
-    const uint32_t batch_size = is_7nm ? 128u : (is_frontier ? 1024u : 512u);
-    const uint32_t ubatch_size = is_7nm ? 64u : (is_frontier ? 256u : 128u);
+    const uint32_t batch_size = low_ram ? (avail_mb >= 900 ? 256u : 128u) : (is_frontier ? 1024u : 512u);
+    const uint32_t ubatch_size = low_ram ? (avail_mb >= 900 ? 128u : 64u) : (is_frontier ? 256u : 128u);
+
+    char arch_buf[64] = {0};
+    llama_model_meta_val_str(model, "general.architecture", arch_buf, sizeof(arch_buf));
+    const bool is_gemma_or_iswa = (arch_buf[0] == '\0') ||
+        contains_icase(arch_buf, "gemma") ||
+        contains_icase(arch_buf, "iswa");
+
+    const bool quantize_kv = low_ram || (avail_mb < 2200);
+    struct KvTypePair {
+        ggml_type type_k;
+        ggml_type type_v;
+        const char* label;
+    };
+    const std::vector<KvTypePair> kv_attempts = quantize_kv
+        ? std::vector<KvTypePair>{
+            {GGML_TYPE_Q8_0, GGML_TYPE_Q8_0, "Q8_0/Q8_0"},
+            {GGML_TYPE_Q8_0, GGML_TYPE_F16,  "Q8_0/F16"},
+            {GGML_TYPE_F16,  GGML_TYPE_F16,  "F16/F16"}
+        }
+        : std::vector<KvTypePair>{
+            {GGML_TYPE_F16,  GGML_TYPE_F16,  "F16/F16"}
+        };
 
     for (uint32_t ctx_size : ctx_candidates) {
-        llama_context_params cparams = llama_context_default_params();
-        cparams.n_ctx = ctx_size;
-        cparams.n_batch = batch_size;
-        cparams.n_ubatch = ubatch_size;
-        cparams.n_threads = optimal_threads;
-        cparams.n_threads_batch = optimal_threads;
-        cparams.swa_full = true; // Requerido por llama_kv_cache_iswa para Context Shifting en Gemma
-        cparams.flash_attn_type = LLAMA_FLASH_ATTN_TYPE_AUTO;
-        cparams.offload_kqv = (tier != HardwareTier::CPU);
-        cparams.op_offload = (tier != HardwareTier::CPU);
+        for (const auto& kv_cfg : kv_attempts) {
+            llama_context_params cparams = llama_context_default_params();
+            cparams.n_ctx = ctx_size;
+            cparams.n_batch = batch_size;
+            cparams.n_ubatch = ubatch_size;
+            cparams.n_threads = optimal_threads;
+            cparams.n_threads_batch = batch_threads;
+            cparams.type_k = kv_cfg.type_k;
+            cparams.type_v = kv_cfg.type_v;
+            // Requerido por llama_kv_cache_iswa para Context Shifting en Gemma
+            cparams.swa_full = is_gemma_or_iswa;
+            cparams.flash_attn_type = LLAMA_FLASH_ATTN_TYPE_AUTO;
+            cparams.offload_kqv = (tier != HardwareTier::CPU);
+            cparams.op_offload = (tier != HardwareTier::CPU);
 
-        llama_context* ctx = llama_init_from_model(model, cparams);
-        if (ctx) {
-            // Adjuntar threadpool con afinidad a núcleos Kryo Prime/Performance
-            free_threadpools_locked();
-            if (!perf_core_ids_.empty()) {
-                struct ggml_threadpool_params tp_params = ggml_threadpool_params_default(optimal_threads);
-                std::memset(tp_params.cpumask, 0, sizeof(tp_params.cpumask));
-                for (int core_id : perf_core_ids_) {
-                    if (core_id >= 0 && core_id < GGML_MAX_N_THREADS) {
-                        tp_params.cpumask[core_id] = true;
+            llama_context* ctx = llama_init_from_model(model, cparams);
+            if (ctx) {
+                // Dual threadpool: decode en núcleos rápidos (optimal_threads) + prefill paralelo (batch_threads)
+                free_threadpools_locked();
+                if (perf_core_ids_.size() >= static_cast<size_t>(optimal_threads)) {
+                    struct ggml_threadpool_params tp_params = ggml_threadpool_params_default(optimal_threads);
+                    std::memset(tp_params.cpumask, 0, sizeof(tp_params.cpumask));
+                    for (int core_id : perf_core_ids_) {
+                        if (core_id >= 0 && core_id < GGML_MAX_N_THREADS) {
+                            tp_params.cpumask[core_id] = true;
+                        }
                     }
+                    tp_params.strict_cpu = true;
+                    tp_params.prio = GGML_SCHED_PRIO_HIGH;
+                    threadpool_ = ggml_threadpool_new(&tp_params);
                 }
-                tp_params.strict_cpu = true;
-                tp_params.prio = GGML_SCHED_PRIO_HIGH;
-                threadpool_ = ggml_threadpool_new(&tp_params);
-                if (threadpool_) {
-                    llama_attach_threadpool(ctx, threadpool_, threadpool_);
+                if (batch_threads > optimal_threads) {
+                    struct ggml_threadpool_params tp_batch_params = ggml_threadpool_params_default(batch_threads);
+                    tp_batch_params.strict_cpu = false;
+                    tp_batch_params.prio = GGML_SCHED_PRIO_HIGH;
+                    threadpool_batch_ = ggml_threadpool_new(&tp_batch_params);
                 }
-            }
+                if (threadpool_ || threadpool_batch_) {
+                    llama_attach_threadpool(
+                        ctx,
+                        threadpool_,
+                        threadpool_batch_ ? threadpool_batch_ : threadpool_
+                    );
+                }
 
-            {
-                std::lock_guard<std::mutex> s_lock(stats_mutex_);
-                last_stats_.active_n_ctx = static_cast<int32_t>(ctx_size);
-                last_stats_.available_ram_mb = avail_mb;
-                last_stats_.soc_model = soc_model_;
-            }
+                {
+                    std::lock_guard<std::mutex> s_lock(stats_mutex_);
+                    last_stats_.active_n_ctx = static_cast<int32_t>(ctx_size);
+                    last_stats_.available_ram_mb = avail_mb;
+                    last_stats_.soc_model = soc_model_;
+                }
 
-            LOGI("Contexto creado (%s): n_ctx=%u, threads=%d, availRAM=%zu MB",
-                 tier_to_cstr(tier), ctx_size, optimal_threads, avail_mb);
-            return ctx;
+                LOGI("Contexto creado (%s): n_ctx=%u, kv=%s, swa_full=%d, decode_thr=%d, batch_thr=%d, availRAM=%zu MB",
+                     tier_to_cstr(tier), ctx_size, kv_cfg.label, is_gemma_or_iswa ? 1 : 0, optimal_threads, batch_threads, avail_mb);
+                return ctx;
+            }
         }
         LOGW("Fallo al reservar n_ctx=%u en %s (RAM disp=%zu MB), degradando contexto...",
              ctx_size, tier_to_cstr(tier), avail_mb);
@@ -329,7 +409,8 @@ bool KofuEngine::initialize_with_hardware_fallback(const std::string& source_pat
             break;
         case PreferredAccelerator::AUTO_NPU_GPU_CPU:
         default:
-            tier_order = {HardwareTier::NPU, HardwareTier::GPU, HardwareTier::CPU};
+            // Priorizar GPU primero; si no está disponible o es incompatible, degradar a NPU/CPU
+            tier_order = {HardwareTier::GPU, HardwareTier::NPU, HardwareTier::CPU};
             break;
     }
 
@@ -337,7 +418,7 @@ bool KofuEngine::initialize_with_hardware_fallback(const std::string& source_pat
         std::vector<ggml_backend_dev_t> selected_devs;
         if (tier == HardwareTier::NPU) {
             if (npu_devs.empty()) {
-                LOGI("Cascada Fallback: Tier NPU no disponible en esta compilación/dispositivo; degradando a GPU.");
+                LOGI("Cascada Fallback: Tier NPU no disponible en esta compilación/dispositivo; degradando a CPU.");
                 continue;
             }
             selected_devs.push_back(npu_devs.front());
@@ -345,7 +426,7 @@ bool KofuEngine::initialize_with_hardware_fallback(const std::string& source_pat
             selected_devs.push_back(nullptr);
         } else if (tier == HardwareTier::GPU) {
             if (gpu_devs.empty()) {
-                LOGI("Cascada Fallback: Tier GPU (OpenCL/Vulkan Adreno) no disponible; degradando a CPU ARMv8 SIMD.");
+                LOGI("Cascada Fallback: GPU (Vulkan/OpenCL) no disponible o no compatible; usando CPU ARMv8 SIMD.");
                 continue;
             }
             selected_devs.push_back(gpu_devs.front());
@@ -358,10 +439,13 @@ bool KofuEngine::initialize_with_hardware_fallback(const std::string& source_pat
             }
         }
 
+        const size_t avail_mb = get_available_ram_mb();
         llama_model_params mparams = llama_model_default_params();
         mparams.devices = selected_devs.empty() ? nullptr : selected_devs.data();
         mparams.n_gpu_layers = (tier == HardwareTier::CPU) ? 0 : -1;
         mparams.load_mode = (tier == HardwareTier::CPU) ? LLAMA_LOAD_MODE_MMAP : LLAMA_LOAD_MODE_AUTO;
+        // En presupuesto <= 2 GB evitar repacking en RssAnon para mantener mmap zero-copy evictable
+        mparams.use_extra_bufts = !low_ram_mode_.load() && (avail_mb >= 2200);
 
         llama_model* candidate_model = llama_model_load_from_file(source_path.c_str(), mparams);
         if (!candidate_model) {
@@ -393,10 +477,70 @@ bool KofuEngine::initialize_with_hardware_fallback(const std::string& source_pat
 
         LOGI("Modelo cargado en Tier %s (%s): %s",
              tier_to_cstr(tier), soc_model_.c_str(), display_name.c_str());
+        warmup_system_prompt_locked();
         return true;
     }
 
     return false;
+}
+
+void KofuEngine::warmup_system_prompt_locked() {
+    if (!lmodel_ || !lctx_) return;
+    std::string sys_prompt;
+    std::string lower_name;
+    {
+        std::lock_guard<std::mutex> s_lock(stats_mutex_);
+        sys_prompt = gen_config_.system_prompt;
+        lower_name = model_name_;
+    }
+    if (sys_prompt.empty()) return;
+    std::transform(lower_name.begin(), lower_name.end(), lower_name.begin(), ::tolower);
+    PromptStyle prompt_style = PromptStyle::GEMMA;
+    if (lower_name.find("gemma4") != std::string::npos || lower_name.find("gemma-4") != std::string::npos) {
+        prompt_style = PromptStyle::GEMMA_4;
+    } else if (lower_name.find("chatml") != std::string::npos ||
+               lower_name.find("qwen") != std::string::npos ||
+               lower_name.find("smol") != std::string::npos) {
+        prompt_style = PromptStyle::CHATML;
+    }
+
+    const std::string sys_only = build_system_prefix(sys_prompt, prompt_style);
+    if (sys_only.empty()) return;
+    const llama_vocab* vocab = llama_model_get_vocab(lmodel_);
+    if (!vocab) return;
+
+    std::vector<llama_token> sys_toks(sys_only.size() + 16);
+    int32_t n_sys = llama_tokenize(
+        vocab, sys_only.c_str(), static_cast<int32_t>(sys_only.length()),
+        sys_toks.data(), static_cast<int32_t>(sys_toks.size()), true, true
+    );
+    if (n_sys <= 3) return;
+    // Excluir último token (\n\n) para evitar fusión BPE con la primera palabra del usuario
+    const int32_t prefix_len = std::min<int32_t>(n_sys - 1, static_cast<int32_t>(llama_n_ctx(lctx_)) / 4);
+    if (prefix_len <= 2) return;
+    sys_toks.resize(prefix_len);
+
+    llama_memory_t mem = llama_get_memory(lctx_);
+    if (mem) llama_memory_clear(mem, true);
+    kv_cache_tokens_.clear();
+
+    llama_batch batch = llama_batch_init(prefix_len, 0, 1);
+    for (int32_t i = 0; i < prefix_len; ++i) {
+        batch.token[i] = sys_toks[i];
+        batch.pos[i] = i;
+        batch.n_seq_id[i] = 1;
+        batch.seq_id[i][0] = 0;
+        batch.logits[i] = 0;
+    }
+    batch.n_tokens = prefix_len;
+
+    if (llama_decode(lctx_, batch) == 0) {
+        kv_cache_tokens_ = std::move(sys_toks);
+        LOGI("KV Warmup completado: %d tokens de System Prompt pre-cacheados", prefix_len);
+    } else if (mem) {
+        llama_memory_clear(mem, true);
+    }
+    llama_batch_free(batch);
 }
 
 void KofuEngine::unload_model_locked() {
@@ -509,7 +653,24 @@ void KofuEngine::set_preferred_accelerator(int mode) {
     }
 }
 
-void KofuEngine::trim_memory() {
+void KofuEngine::set_low_ram_budget(bool enabled, size_t max_rss_mb, bool debug_governor_enabled) {
+    low_ram_mode_.store(enabled);
+    debug_ram_governor_enabled_.store(debug_governor_enabled);
+    max_rss_budget_mb_.store(std::max<size_t>(512, max_rss_mb));
+    LOGI("LowRamBudget configurado: enabled=%d, max_rss=%zu MB, debug_governor=%d",
+         enabled ? 1 : 0, max_rss_budget_mb_.load(), debug_governor_enabled ? 1 : 0);
+}
+
+void KofuEngine::trim_memory(int level) {
+    // Niveles moderados/bajos/UI oculta (5, 10, 20): liberar solo micro-embedder sin interrumpir generación
+    unload_embed_model();
+    const bool is_critical_trim = (level == 15) || (level >= 40);
+    if (!is_critical_trim) {
+        LOGI("MemoryGuard: trim_memory nivel=%d, embedder liberado; generación activa preservada (RAM disp: %zu MB)",
+             level, get_available_ram_mb());
+        return;
+    }
+
     if (is_generating_.load()) {
         cancel_generation();
         return;
@@ -522,7 +683,251 @@ void KofuEngine::trim_memory() {
         llama_memory_clear(mem, true);
     }
     kv_cache_tokens_.clear();
-    LOGW("MemoryGuard: KV cache liberado tras evento trim_memory (RAM disp: %zu MB)", get_available_ram_mb());
+    LOGW("MemoryGuard: KV cache liberado tras evento crítico trim_memory=%d (RAM disp: %zu MB)", level, get_available_ram_mb());
+}
+
+void KofuEngine::unload_embed_model_locked() {
+    is_embed_loaded_.store(false);
+    embed_dim_ = 0;
+    if (embed_ctx_) {
+        llama_free(embed_ctx_);
+        embed_ctx_ = nullptr;
+    }
+    if (embed_model_) {
+        llama_model_free(embed_model_);
+        embed_model_ = nullptr;
+    }
+}
+
+void KofuEngine::unload_embed_model() {
+    std::lock_guard<std::mutex> lock(embed_mutex_);
+    unload_embed_model_locked();
+}
+
+bool KofuEngine::is_embed_model_loaded() const {
+    return is_embed_loaded_.load();
+}
+
+int32_t KofuEngine::get_embed_dim() const {
+    std::lock_guard<std::mutex> lock(embed_mutex_);
+    return embed_dim_;
+}
+
+bool KofuEngine::load_embed_model(const std::string& filepath) {
+    std::lock_guard<std::mutex> lock(embed_mutex_);
+    unload_embed_model_locked();
+
+    llama_model_params mparams = llama_model_default_params();
+    mparams.n_gpu_layers = 0;
+    mparams.load_mode = LLAMA_LOAD_MODE_MMAP;
+
+    embed_model_ = llama_model_load_from_file(filepath.c_str(), mparams);
+    if (!embed_model_) {
+        LOGE("No se pudo cargar micro-embedder GGUF: %s", filepath.c_str());
+        return false;
+    }
+
+    llama_context_params cparams = llama_context_default_params();
+    cparams.n_ctx = 256;
+    cparams.n_batch = 128;
+    cparams.n_ubatch = 128;
+    unsigned int hw_threads = std::thread::hardware_concurrency();
+    int32_t n_threads = !perf_core_ids_.empty()
+        ? static_cast<int32_t>(std::min<size_t>(4, std::max<size_t>(2, perf_core_ids_.size())))
+        : static_cast<int32_t>(std::min<unsigned int>(4, std::max(2u, hw_threads / 2)));
+    cparams.n_threads = n_threads;
+    cparams.n_threads_batch = n_threads;
+    cparams.embeddings = true;
+    cparams.pooling_type = LLAMA_POOLING_TYPE_UNSPECIFIED;
+
+    embed_ctx_ = llama_init_from_model(embed_model_, cparams);
+    if (!embed_ctx_) {
+        LOGE("No se pudo crear contexto de embeddings para %s", filepath.c_str());
+        unload_embed_model_locked();
+        return false;
+    }
+
+    embed_dim_ = llama_model_n_embd(embed_model_);
+    is_embed_loaded_.store(embed_dim_ > 0);
+    LOGI("Micro-embedder GGUF listo: dim=%d, pooling=%d, path=%s",
+         embed_dim_, static_cast<int>(llama_pooling_type(embed_ctx_)), filepath.c_str());
+    return is_embed_loaded_.load();
+}
+
+std::vector<int8_t> KofuEngine::embed_text_int8(const std::string& text) {
+    std::lock_guard<std::mutex> lock(embed_mutex_);
+    if (!embed_model_ || !embed_ctx_ || embed_dim_ <= 0 || text.empty()) {
+        return {};
+    }
+
+    const llama_vocab* vocab = llama_model_get_vocab(embed_model_);
+    if (!vocab) return {};
+
+    std::vector<llama_token> tokens(text.size() + 32);
+    int32_t n_tokens = llama_tokenize(
+        vocab,
+        text.c_str(),
+        static_cast<int32_t>(text.length()),
+        tokens.data(),
+        static_cast<int32_t>(tokens.size()),
+        true,
+        true
+    );
+    if (n_tokens < 0) {
+        tokens.resize(-n_tokens);
+        n_tokens = llama_tokenize(
+            vocab,
+            text.c_str(),
+            static_cast<int32_t>(text.length()),
+            tokens.data(),
+            static_cast<int32_t>(tokens.size()),
+            true,
+            true
+        );
+    }
+    if (n_tokens <= 0) return {};
+
+    const int32_t max_embed_ctx = static_cast<int32_t>(llama_n_ctx(embed_ctx_));
+    if (n_tokens > max_embed_ctx) {
+        n_tokens = max_embed_ctx;
+    }
+    tokens.resize(n_tokens);
+
+    llama_memory_t mem = llama_get_memory(embed_ctx_);
+    if (mem) {
+        llama_memory_clear(mem, true);
+    }
+
+    llama_batch batch = llama_batch_init(n_tokens, 0, 1);
+    for (int32_t i = 0; i < n_tokens; ++i) {
+        batch.token[i] = tokens[i];
+        batch.pos[i] = i;
+        batch.n_seq_id[i] = 1;
+        batch.seq_id[i][0] = 0;
+        batch.logits[i] = 1;
+    }
+    batch.n_tokens = n_tokens;
+
+    const int rc = llama_decode(embed_ctx_, batch);
+    llama_batch_free(batch);
+    if (rc != 0) {
+        LOGE("llama_decode falló en micro-embedder (rc=%d)", rc);
+        return {};
+    }
+
+    const float* emb = nullptr;
+    if (llama_pooling_type(embed_ctx_) != LLAMA_POOLING_TYPE_NONE) {
+        emb = llama_get_embeddings_seq(embed_ctx_, 0);
+    }
+    if (!emb) {
+        emb = llama_get_embeddings_ith(embed_ctx_, -1);
+    }
+    if (!emb) {
+        emb = llama_get_embeddings(embed_ctx_);
+    }
+    if (!emb) return {};
+
+    double norm_sq = 0.0;
+    for (int32_t i = 0; i < embed_dim_; ++i) {
+        norm_sq += static_cast<double>(emb[i]) * static_cast<double>(emb[i]);
+    }
+    const float inv_norm = (norm_sq > 1e-12) ? static_cast<float>(1.0 / std::sqrt(norm_sq)) : 0.0f;
+
+    float max_abs = 0.0f;
+    std::vector<float> normalized(embed_dim_);
+    for (int32_t i = 0; i < embed_dim_; ++i) {
+        const float v = emb[i] * inv_norm;
+        normalized[i] = v;
+        max_abs = std::max(max_abs, std::fabs(v));
+    }
+
+    std::vector<int8_t> out(embed_dim_, 0);
+    if (max_abs > 1e-9f) {
+        const float scale = 127.0f / max_abs;
+        for (int32_t i = 0; i < embed_dim_; ++i) {
+            const float q = std::clamp(std::round(normalized[i] * scale), -127.0f, 127.0f);
+            out[i] = static_cast<int8_t>(q);
+        }
+    }
+    return out;
+}
+
+std::vector<float> KofuEngine::score_int8_cosine(
+    const std::vector<int8_t>& query_vec,
+    const int8_t* corpus_flat,
+    int32_t num_docs,
+    int32_t dim
+) {
+    std::vector<float> scores(static_cast<size_t>(std::max(0, num_docs)), 0.0f);
+    if (!corpus_flat || num_docs <= 0 || dim <= 0 || static_cast<int32_t>(query_vec.size()) != dim) {
+        return scores;
+    }
+
+    const int8_t* q = query_vec.data();
+    int64_t q_norm_sq = 0;
+#if defined(__aarch64__)
+    int32x4_t q_norm_acc = vdupq_n_s32(0);
+    int32_t i_q = 0;
+    for (; i_q + 16 <= dim; i_q += 16) {
+        int8x16_t vq = vld1q_s8(q + i_q);
+        int16x8_t prod_lo = vmull_s8(vget_low_s8(vq), vget_low_s8(vq));
+        int16x8_t prod_hi = vmull_s8(vget_high_s8(vq), vget_high_s8(vq));
+        q_norm_acc = vpadalq_s16(q_norm_acc, prod_lo);
+        q_norm_acc = vpadalq_s16(q_norm_acc, prod_hi);
+    }
+    q_norm_sq = static_cast<int64_t>(vaddvq_s32(q_norm_acc));
+    for (; i_q < dim; ++i_q) {
+        q_norm_sq += static_cast<int64_t>(q[i_q]) * static_cast<int64_t>(q[i_q]);
+    }
+#else
+    for (int32_t i = 0; i < dim; ++i) {
+        q_norm_sq += static_cast<int64_t>(q[i]) * static_cast<int64_t>(q[i]);
+    }
+#endif
+    if (q_norm_sq <= 0) return scores;
+    const double q_norm = std::sqrt(static_cast<double>(q_norm_sq));
+
+    for (int32_t d = 0; d < num_docs; ++d) {
+        const int8_t* doc = corpus_flat + static_cast<size_t>(d) * static_cast<size_t>(dim);
+        int64_t dot = 0;
+        int64_t d_norm_sq = 0;
+
+#if defined(__aarch64__)
+        int32x4_t dot_acc = vdupq_n_s32(0);
+        int32x4_t d_norm_acc = vdupq_n_s32(0);
+        int32_t i = 0;
+        for (; i + 16 <= dim; i += 16) {
+            int8x16_t vq = vld1q_s8(q + i);
+            int8x16_t vd = vld1q_s8(doc + i);
+
+            int16x8_t dot_lo = vmull_s8(vget_low_s8(vq), vget_low_s8(vd));
+            int16x8_t dot_hi = vmull_s8(vget_high_s8(vq), vget_high_s8(vd));
+            dot_acc = vpadalq_s16(dot_acc, dot_lo);
+            dot_acc = vpadalq_s16(dot_acc, dot_hi);
+
+            int16x8_t dn_lo = vmull_s8(vget_low_s8(vd), vget_low_s8(vd));
+            int16x8_t dn_hi = vmull_s8(vget_high_s8(vd), vget_high_s8(vd));
+            d_norm_acc = vpadalq_s16(d_norm_acc, dn_lo);
+            d_norm_acc = vpadalq_s16(d_norm_acc, dn_hi);
+        }
+        dot = static_cast<int64_t>(vaddvq_s32(dot_acc));
+        d_norm_sq = static_cast<int64_t>(vaddvq_s32(d_norm_acc));
+        for (; i < dim; ++i) {
+            dot += static_cast<int64_t>(q[i]) * static_cast<int64_t>(doc[i]);
+            d_norm_sq += static_cast<int64_t>(doc[i]) * static_cast<int64_t>(doc[i]);
+        }
+#else
+        for (int32_t i = 0; i < dim; ++i) {
+            dot += static_cast<int64_t>(q[i]) * static_cast<int64_t>(doc[i]);
+            d_norm_sq += static_cast<int64_t>(doc[i]) * static_cast<int64_t>(doc[i]);
+        }
+#endif
+        if (d_norm_sq > 0) {
+            const double denom = q_norm * std::sqrt(static_cast<double>(d_norm_sq));
+            scores[d] = static_cast<float>(static_cast<double>(dot) / denom);
+        }
+    }
+    return scores;
 }
 
 void KofuEngine::set_generation_config(const GenerationConfig& config) {
@@ -630,10 +1035,33 @@ void KofuEngine::generate_stream_history(
     const int32_t max_context = static_cast<int32_t>(llama_n_ctx(lctx_));
     const int32_t reserved_generation = std::min(384, max_context / 4);
     const int32_t max_prompt_budget = std::max(128, max_context - reserved_generation);
+
+    // Calcular tokens del prefijo del System Prompt para anclar n_keep en poda y Context Shifting
+    size_t system_prefix_tokens = 16;
+    if (!cfg.system_prompt.empty()) {
+        const std::string sys_only = build_system_prefix(cfg.system_prompt, prompt_style);
+        if (!sys_only.empty()) {
+            std::vector<llama_token> sys_toks(sys_only.size() + 16);
+            int32_t n_sys = llama_tokenize(
+                vocab,
+                sys_only.c_str(),
+                static_cast<int32_t>(sys_only.length()),
+                sys_toks.data(),
+                static_cast<int32_t>(sys_toks.size()),
+                true,
+                true
+            );
+            if (n_sys > 2) {
+                system_prefix_tokens = static_cast<size_t>(std::max<int32_t>(8, n_sys - 1));
+            }
+        }
+    }
+    system_prefix_tokens = std::min(system_prefix_tokens, tokens_list.size() / 2);
+
     if (static_cast<int32_t>(tokens_list.size()) > max_prompt_budget) {
         LOGW("Prompt excede presupuesto de contexto (%zu > %d), aplicando poda segura...",
              tokens_list.size(), max_prompt_budget);
-        const size_t keep_prefix = std::min<size_t>(64, tokens_list.size() / 4);
+        const size_t keep_prefix = std::max<size_t>(16, system_prefix_tokens);
         const size_t excess = tokens_list.size() - static_cast<size_t>(max_prompt_budget);
         if (keep_prefix + excess < tokens_list.size()) {
             tokens_list.erase(
@@ -680,7 +1108,7 @@ void KofuEngine::generate_stream_history(
         if (cfg.repeat_penalty > 1.0f) {
             llama_sampler_chain_add(
                 smpl,
-                llama_sampler_init_penalties(llama_vocab_n_tokens(vocab), 64, cfg.repeat_penalty, 0.0f, 0.0f)
+                llama_sampler_init_penalties(llama_vocab_n_tokens(vocab), 32, cfg.repeat_penalty, 0.0f, 0.0f)
             );
         }
         llama_sampler_chain_add(smpl, llama_sampler_init_greedy());
@@ -690,31 +1118,45 @@ void KofuEngine::generate_stream_history(
         if (cfg.repeat_penalty > 1.0f) {
             llama_sampler_chain_add(
                 smpl,
-                llama_sampler_init_penalties(llama_vocab_n_tokens(vocab), 64, cfg.repeat_penalty, 0.0f, 0.0f)
+                llama_sampler_init_penalties(llama_vocab_n_tokens(vocab), 32, cfg.repeat_penalty, 0.0f, 0.0f)
             );
         }
         llama_sampler_chain_add(smpl, llama_sampler_init_temp(cfg.temperature));
         llama_sampler_chain_add(smpl, llama_sampler_init_dist(static_cast<uint32_t>(std::time(nullptr))));
     }
 
-    const size_t penalty_seed_start = (tokens_list.size() > 64) ? (tokens_list.size() - 64) : 0;
+    const size_t penalty_seed_start = (tokens_list.size() > 32) ? (tokens_list.size() - 32) : 0;
     for (size_t i = penalty_seed_start; i < tokens_list.size(); ++i) {
         llama_sampler_accept(smpl, tokens_list[i]);
     }
 
-    // 5. Prefill en micro-lotes de 128
-    constexpr int32_t kPrefillBatchSize = 128;
-    llama_batch batch = llama_batch_init(kPrefillBatchSize, 0, 1);
+    // 5. Preflight de memoria <= 2 GB y Prefill en micro-lotes
+    const bool strict_budget = low_ram_mode_.load() || (std::string(KOFU_SILICON_TIER_STR) == "7NM");
+    const size_t max_rss_budget = max_rss_budget_mb_.load();
+    if (strict_budget && is_embed_loaded_.load()) {
+        const size_t pre_avail = get_available_ram_mb();
+        const size_t pre_rss = get_process_rss_mb();
+        if (pre_avail < 240 || (pre_rss > 0 && pre_rss + 80 >= max_rss_budget)) {
+            LOGW("Preflight <=2GB: liberando micro-embedder antes de prefill (avail=%zu MB, rss=%zu MB)",
+                 pre_avail, pre_rss);
+            unload_embed_model();
+        }
+    }
+
+    const int32_t prefill_batch_size = std::clamp<int32_t>(
+        static_cast<int32_t>(llama_n_batch(lctx_)), 128, 256
+    );
+    llama_batch batch = llama_batch_init(prefill_batch_size, 0, 1);
     bool prompt_interrupted = false;
 
-    for (size_t i = n_past; i < tokens_list.size(); i += kPrefillBatchSize) {
+    for (size_t i = n_past; i < tokens_list.size(); i += static_cast<size_t>(prefill_batch_size)) {
         if (is_cancelled_.load()) {
             prompt_interrupted = true;
             break;
         }
 
         const int32_t n_eval = static_cast<int32_t>(
-            std::min(static_cast<size_t>(kPrefillBatchSize), tokens_list.size() - i)
+            std::min(static_cast<size_t>(prefill_batch_size), tokens_list.size() - i)
         );
         for (int32_t j = 0; j < n_eval; ++j) {
             batch.token[j] = tokens_list[i + j];
@@ -751,7 +1193,15 @@ void KofuEngine::generate_stream_history(
         return;
     }
 
-    // 6. Bucle de generación autoregresiva con Context Shifting ISWA-safe y LMK Guard
+    // 6. Bucle de generación autoregresiva con Context Shifting ISWA-safe, Gobernador Debug 70-80% y LMK Guard
+    auto decode_start_time = std::chrono::steady_clock::now();
+    const double prefill_ms = std::chrono::duration<double, std::milli>(decode_start_time - start_time).count();
+    const bool debug_governor = debug_ram_governor_enabled_.load();
+    const size_t soft_70_rss_mb = (max_rss_budget * 70) / 100;
+    const size_t hard_80_rss_mb = (max_rss_budget * 80) / 100;
+    std::string gov_state = debug_governor ? "NORMAL" : "OFF";
+    uint32_t throttle_delay_ms = 0;
+
     llama_pos n_cur = static_cast<llama_pos>(tokens_list.size());
     const uint32_t max_generated_tokens = static_cast<uint32_t>(
         std::clamp(cfg.max_tokens, 8, max_context)
@@ -786,22 +1236,64 @@ void KofuEngine::generate_stream_history(
             break;
         }
 
-        // LMK Circuit Breaker cada 16 tokens para evitar desborde de RAM (180 MB en 7nm, 120 MB en 5nm/Frontier)
-        if (token_count > 0 && (token_count % 16 == 0)) {
-            const size_t min_safe_ram = (std::string(KOFU_SILICON_TIER_STR) == "7NM") ? 180 : 120;
-            const size_t avail_mb = get_available_ram_mb();
-            if (avail_mb < min_safe_ram) {
-                LOGW("LMK Guard activado (RAM libre=%zu MB < %zu MB), deteniendo generación segura", avail_mb, min_safe_ram);
-                low_ram_triggered = true;
-                emit_utf8_safe("", true);
-                break;
+        // LMK Circuit Breaker + Gobernador Debug 70-80% cada 8 tokens (o cada token si está frenando)
+        if (token_count > 0 && ((token_count % 8 == 0) || throttle_delay_ms > 0)) {
+            const size_t min_safe_ram = strict_budget ? 150 : 120;
+            const size_t max_safe_anon_mb = strict_budget ? 650 : 950;
+            size_t avail_mb = get_available_ram_mb();
+            size_t anon_mb = get_process_anon_rss_mb();
+            size_t rss_mb = get_process_rss_mb();
+
+            if (debug_governor) {
+                if (rss_mb >= hard_80_rss_mb || avail_mb < 220) {
+                    if (is_embed_loaded_.load()) unload_embed_model();
+                    if (gov_state != "THROTTLE_80") {
+                        LOGW("DebugRamGovernor [>80%%]: VmRSS=%zu/%zu MB | availRAM=%zu MB -> frenado 75ms/tok",
+                             rss_mb, max_rss_budget, avail_mb);
+                    }
+                    gov_state = "THROTTLE_80";
+                    throttle_delay_ms = 75;
+                } else if (rss_mb >= soft_70_rss_mb || avail_mb < 320) {
+                    if (is_embed_loaded_.load()) unload_embed_model();
+                    if (gov_state != "THROTTLE_70") {
+                        LOGI("DebugRamGovernor [70-80%%]: VmRSS=%zu/%zu MB | availRAM=%zu MB -> frenado 25ms/tok",
+                             rss_mb, max_rss_budget, avail_mb);
+                    }
+                    gov_state = "THROTTLE_70";
+                    throttle_delay_ms = 25;
+                } else {
+                    gov_state = "NORMAL";
+                    throttle_delay_ms = 0;
+                }
+            }
+
+            const bool over_rss_ceiling = strict_budget && (rss_mb >= max_rss_budget);
+            if (avail_mb < min_safe_ram || (anon_mb > 0 && anon_mb > max_safe_anon_mb) || over_rss_ceiling) {
+                if (is_embed_loaded_.load()) {
+                    unload_embed_model();
+                    avail_mb = get_available_ram_mb();
+                    anon_mb = get_process_anon_rss_mb();
+                    rss_mb = get_process_rss_mb();
+                }
+                const bool still_over_rss = strict_budget && (rss_mb >= max_rss_budget);
+                if (avail_mb < min_safe_ram || (anon_mb > 0 && anon_mb > max_safe_anon_mb) || still_over_rss) {
+                    LOGW("LMK Guard activado (RAM libre=%zu MB < %zu MB | RssAnon=%zu MB > %zu MB | VmRSS=%zu/%zu MB), deteniendo generación segura",
+                         avail_mb, min_safe_ram, anon_mb, max_safe_anon_mb, rss_mb, max_rss_budget);
+                    if (debug_governor) gov_state = "LIMIT_HALT";
+                    low_ram_triggered = true;
+                    emit_utf8_safe("", true);
+                    break;
+                }
             }
         }
 
         // Context Shifting automático si la ventana KV alcanza el borde
         if (n_cur >= max_context - 4) {
             if (mem && llama_memory_can_shift(mem)) {
-                const llama_pos n_keep = std::min<llama_pos>(64, n_cur / 4);
+                const llama_pos n_keep = std::min<llama_pos>(
+                    static_cast<llama_pos>(std::max<size_t>(16, system_prefix_tokens)),
+                    n_cur / 2
+                );
                 const llama_pos n_discard = std::max<llama_pos>(64, (n_cur - n_keep) / 2);
                 if (n_discard > 0 && n_keep + n_discard < n_cur) {
                     llama_memory_seq_rm(mem, 0, n_keep, n_keep + n_discard);
@@ -863,6 +1355,10 @@ void KofuEngine::generate_stream_history(
         }
 
         kv_cache_tokens_.push_back(new_token_id);
+
+        if (debug_governor && throttle_delay_ms > 0) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(throttle_delay_ms));
+        }
     }
 
     emit_utf8_safe("", true);
@@ -877,7 +1373,10 @@ void KofuEngine::generate_stream_history(
 
     auto end_time = std::chrono::steady_clock::now();
     double elapsed = std::chrono::duration<double>(end_time - start_time).count();
+    double decode_elapsed = std::chrono::duration<double>(end_time - decode_start_time).count();
+    double decode_tps = (decode_elapsed > 0.0 && token_count > 0) ? (token_count / decode_elapsed) : 0.0;
     const size_t rss_mb = get_process_rss_mb();
+    const size_t anon_mb = get_process_anon_rss_mb();
     const size_t avail_mb = get_available_ram_mb();
 
     {
@@ -885,16 +1384,20 @@ void KofuEngine::generate_stream_history(
         last_stats_.tokens_generated = token_count;
         last_stats_.elapsed_seconds = elapsed;
         last_stats_.tokens_per_second = (elapsed > 0.0) ? (token_count / elapsed) : 0.0;
+        last_stats_.decode_tokens_per_second = decode_tps;
+        last_stats_.prefill_ms = prefill_ms;
         last_stats_.memory_rss_mb = rss_mb;
+        last_stats_.anon_rss_mb = anon_mb;
         last_stats_.available_ram_mb = avail_mb;
         last_stats_.hardware_tier = tier_to_cstr(active_tier_);
         last_stats_.soc_model = soc_model_;
         last_stats_.backend_name = std::string("llama.cpp ") + tier_to_cstr(active_tier_);
+        last_stats_.ram_governor_state = gov_state;
     }
 
     is_generating_.store(false);
-    LOGI("Inferencia completada | tok=%u | elapsed=%.2fs | tps=%.2f | rss=%zu MB | availRAM=%zu MB",
-         token_count, elapsed, (elapsed > 0.0) ? (token_count / elapsed) : 0.0, rss_mb, avail_mb);
+    LOGI("Inferencia completada | tok=%u | prefill=%.0fms | elapsed=%.2fs | tps=%.2f | decode_tps=%.2f | gov=%s | rss=%zu MB | anon=%zu MB | availRAM=%zu MB",
+         token_count, prefill_ms, elapsed, (elapsed > 0.0) ? (token_count / elapsed) : 0.0, decode_tps, gov_state.c_str(), rss_mb, anon_mb, avail_mb);
 }
 
 void KofuEngine::cancel_generation() {
@@ -908,10 +1411,14 @@ std::string KofuEngine::get_stats_json() const {
        << "\"tokens_generated\":" << last_stats_.tokens_generated << ","
        << "\"elapsed_seconds\":" << last_stats_.elapsed_seconds << ","
        << "\"tokens_per_sec\":" << last_stats_.tokens_per_second << ","
+       << "\"decode_tokens_per_sec\":" << last_stats_.decode_tokens_per_second << ","
+       << "\"prefill_ms\":" << last_stats_.prefill_ms << ","
        << "\"memory_rss_mb\":" << last_stats_.memory_rss_mb << ","
+       << "\"anon_rss_mb\":" << last_stats_.anon_rss_mb << ","
        << "\"available_ram_mb\":" << (last_stats_.available_ram_mb > 0 ? last_stats_.available_ram_mb : get_available_ram_mb()) << ","
        << "\"n_ctx\":" << last_stats_.active_n_ctx << ","
        << "\"hardware_tier\":\"" << last_stats_.hardware_tier << "\","
+       << "\"ram_governor_state\":\"" << last_stats_.ram_governor_state << "\","
        << "\"silicon_tier\":\"" << KOFU_SILICON_TIER_STR << "\","
        << "\"isa_arch\":\"" << KOFU_ARM_ARCH_STR << "\","
        << "\"soc_model\":\"" << last_stats_.soc_model << "\","

@@ -123,7 +123,7 @@ class ModelDownloadService : Service() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             val channel = NotificationChannel(
                 CHANNEL_ID,
-                "Descargas de Modelos Kofu",
+                "Descargas de Modelos Aura",
                 NotificationManager.IMPORTANCE_LOW
             ).apply {
                 description = "Progreso de descarga en segundo plano de modelos LLM"
@@ -280,7 +280,8 @@ class ModelDownloadService : Service() {
             return
         }
 
-        val modelOpt = LlamaRepository.AVAILABLE_MODELS.find { it.fileName == safeFileName }
+        val modelOpt = (LlamaRepository.AVAILABLE_MODELS + LlamaRepository.EMBEDDER_MODEL)
+            .find { it.fileName == safeFileName }
             ?: LlamaRepository.selectedModel
         val expectedMin = LlamaRepository.getExpectedMinSize(modelOpt)
 
@@ -471,7 +472,7 @@ class ModelDownloadService : Service() {
         downloadJob?.cancel()
         downloadJob = null
 
-        val currentModel = LlamaRepository.currentDownloadingModelName.ifBlank { "Modelo Kofu" }
+        val currentModel = LlamaRepository.currentDownloadingModelName.ifBlank { "Modelo Aura" }
         val currentPercent = (LlamaRepository.downloadProgress * 100).toInt()
 
         LlamaRepository.isDownloadingModel = false
@@ -550,7 +551,7 @@ class ModelDownloadService : Service() {
         downloadJob?.cancel()
         downloadJob = null
 
-        val currentModel = LlamaRepository.currentDownloadingModelName.ifBlank { "Modelo Kofu" }
+        val currentModel = LlamaRepository.currentDownloadingModelName.ifBlank { "Modelo Aura" }
         val currentPercent = (LlamaRepository.downloadProgress * 100).toInt()
 
         LlamaRepository.isDownloadingModel = false

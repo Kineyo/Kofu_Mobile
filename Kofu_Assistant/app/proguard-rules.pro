@@ -15,11 +15,13 @@
     public void onToken(java.lang.String);
 }
 
-# Preservar modelos de datos serializados y configuración
+# Preservar modelos de datos serializados, RAG y configuración
 -keep class com.kofu.assistant.data.** { *; }
+-keep class com.kofu.assistant.data.rag.** { *; }
 -keep class com.kofu.assistant.repository.TurnMessage { *; }
 -keep class com.kofu.assistant.repository.ModelOption { *; }
 -keep class com.kofu.assistant.repository.DebugMetrics { *; }
+-dontwarn org.json.**
 
 # OkHttp y Kotlin Coroutines
 -dontwarn okhttp3.**

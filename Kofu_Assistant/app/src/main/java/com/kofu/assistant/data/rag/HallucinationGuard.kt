@@ -61,17 +61,18 @@ object HallucinationGuard {
 
         val augmentedPrompt = when {
             realtimeOffline -> buildString {
-                append("[AVISO OFFLINE: Kofu opera 100% sin internet; no hay datos en tiempo real.]\n")
-                if (hasRagContext) {
-                    append("[CONTEXTO VERIFICADO - ").append(ragResult.domain.displayName).append("]\n")
-                    append(ragResult.formattedContext).append("\n[/CONTEXTO]\n")
-                }
                 append(userQuery)
+                append("\n\n[AVISO OFFLINE: Aura opera sin internet; no hay datos en tiempo real.]")
+                if (hasRagContext) {
+                    append("\n[CONTEXTO VERIFICADO - ").append(ragResult.domain.displayName).append("]\n")
+                    append(ragResult.formattedContext).append("\n[/CONTEXTO]")
+                }
             }
             hasRagContext -> buildString {
-                append("[CONTEXTO VERIFICADO - ").append(ragResult.domain.displayName).append("]\n")
-                append(ragResult.formattedContext).append("\n[/CONTEXTO]\n")
+                // Inyectar RAG al final del turno para preservar el prefijo KV de sistema e historial previo
                 append(userQuery)
+                append("\n\n[CONTEXTO VERIFICADO - ").append(ragResult.domain.displayName).append("]\n")
+                append(ragResult.formattedContext).append("\n[/CONTEXTO]")
             }
             else -> userQuery
         }

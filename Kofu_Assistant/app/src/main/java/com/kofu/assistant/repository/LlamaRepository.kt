@@ -7,6 +7,7 @@ import android.util.Log
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
+import com.kofu.assistant.BuildConfig
 import com.kofu.assistant.data.ChatCacheManager
 import com.kofu.assistant.data.ChatMessageData
 import com.kofu.assistant.data.ChatSession
@@ -27,10 +28,15 @@ import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import okhttp3.OkHttpClient
+import okhttp3.Request
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
+import java.io.FileInputStream
 import java.io.FileOutputStream
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicBoolean
 
 enum class InferenceBackend(val displayName: String, val badgeLabel: String) {
     NONE("Sin motor", "OFFLINE"),
@@ -46,7 +52,7 @@ enum class BackendMode(val displayName: String) {
 }
 
 enum class AcceleratorPreference(val code: Int, val label: String) {
-    AUTO(0, "Auto (NPU -> GPU -> CPU)"),
+    AUTO(0, "Auto (GPU -> NPU -> CPU)"),
     NPU(1, "Priorizar NPU"),
     GPU(2, "Priorizar GPU"),
     CPU(3, "Solo CPU ARMv8")
@@ -72,14 +78,17 @@ data class ModelOption(
 data class DebugMetrics(
     val tokensGenerated: Int = 0,
     val tokensPerSec: Double = 0.0,
+    val decodeTokensPerSec: Double = 0.0,
     val latencyFirstTokenMs: Long = 0,
     val totalDurationMs: Long = 0,
     val memoryRssMb: Long = 0,
+    val anonRssMb: Long = 0,
     val availableRamMb: Long = 0,
     val activeBackend: String = "Inactivo",
     val activeModel: String = "Ninguno",
     val hardwareTier: String = "NONE",
     val socModel: String = "",
+    val ramGovernorState: String = "OFF",
     val activeRagDomain: String = "OFF",
     val ragLookupMs: Long = 0,
     val ragChunksCount: Int = 0,
@@ -96,7 +105,7 @@ object LlamaRepository {
     private const val TAG = "LlamaRepository"
     private const val PREFS_SETTINGS = "kofu_assistant_settings"
     private const val DEFAULT_SYSTEM_PROMPT =
-        "Eres Kofu, un asistente de IA local útil, atento, privado y respetuoso. Responde de forma clara, precisa y concisa en español."
+        "Eres Aura, una asistente educativa local útil, atenta y privada. Responde de forma clara, precisa y concisa en español."
 
     private val repositoryScope = CoroutineScope(Dispatchers.Main.immediate + SupervisorJob())
     @Volatile
@@ -122,12 +131,14 @@ object LlamaRepository {
     var temperature: Float by mutableStateOf(KofuEditionProfile.current.defaultTemperature)
     var topP: Float by mutableStateOf(0.9f)
     var repeatPenalty: Float by mutableStateOf(1.1f)
-    var maxTokens: Int by mutableStateOf(KofuEditionProfile.current.defaultMaxTokens)
+    var maxTokens: Int by mutableStateOf(KofuEditionProfile.effectiveMaxTokens)
     var systemPrompt: String by mutableStateOf(KofuEditionProfile.current.defaultSystemPrompt)
 
     // Modo de Depuración
     var isDebugMode: Boolean by mutableStateOf(false)
     var debugMetrics: DebugMetrics by mutableStateOf(DebugMetrics())
+    @Volatile
+    var currentPrefillStageText: String = "Buscando contexto..."
 
     // Estado de descarga automática desde Hugging Face
     var isDownloadingModel: Boolean by mutableStateOf(false)
@@ -142,21 +153,44 @@ object LlamaRepository {
     val ollamaClient: OllamaClient = OllamaClient(ollamaHost)
     private val supportedExtensions = listOf(".litertlm", ".task", ".tflite", ".bin", ".gguf")
 
+    val EMBEDDER_MODEL = ModelOption(
+        id = "kofu-embed-minilm",
+        name = "Aura Micro-Embedder (all-MiniLM-L6-v2 Q8_0)",
+        shortName = "MiniLM Embedder",
+        description = "Micro-transformer GGUF dedicado a búsqueda semántica local int8 en RAG.",
+        fileName = "all-MiniLM-L6-v2-Q8_0.gguf",
+        downloadUrl = "https://huggingface.co/second-state/All-MiniLM-L6-v2-Embedding-GGUF/resolve/main/all-MiniLM-L6-v2-Q8_0.gguf",
+        sizeLabel = "~24 MB",
+        isGemma4 = false,
+        isRecommended = false
+    )
+
     val AVAILABLE_MODELS = listOf(
         ModelOption(
-            id = "kofu-v2",
-            name = "Kofu 2.0 Edge (Gemma 2 2B)",
-            shortName = "Kofu 2.0",
-            description = "Modelo predeterminado optimizado para teléfonos Snapdragon ARMv8. Rápido, preciso y equilibrado en español.",
-            fileName = "kofu-v2-edge-q4_k_m.gguf",
-            downloadUrl = "https://huggingface.co/shebxyd/kofu-v2-edge/resolve/main/kofu-v2-edge-q4_k_m.gguf",
-            sizeLabel = "~1.6 GB",
+            id = "kofu-go-1b",
+            name = "Aura 1B Edge (Gemma 3 Q4_K_M)",
+            shortName = "Aura 1B",
+            description = "Modelo 4-bit entrenado para Aura (identidad y materias escolares) en teléfonos Edge (<= 2 GB RAM con RAG).",
+            fileName = "aura-1b-edge-q4_k_m.gguf",
+            downloadUrl = "https://huggingface.co/shebxyd/aura-1b-edge/resolve/main/aura-1b-edge-q4_k_m.gguf",
+            sizeLabel = "~806 MB",
             isGemma4 = false,
             isRecommended = true
         ),
         ModelOption(
+            id = "kofu-v2",
+            name = "Aura 2.0 Edge (Gemma 2 2B)",
+            shortName = "Aura 2.0",
+            description = "Modelo optimizado para teléfonos Snapdragon ARMv8 (6–8 GB RAM). Rápido y equilibrado en español.",
+            fileName = "kofu-v2-edge-q4_k_m.gguf",
+            downloadUrl = "https://huggingface.co/shebxyd/kofu-v2-edge/resolve/main/kofu-v2-edge-q4_k_m.gguf",
+            sizeLabel = "~1.6 GB",
+            isGemma4 = false,
+            isRecommended = false
+        ),
+        ModelOption(
             id = "kofu-2b",
-            name = "Kofu 1.0 Lite (Gemma 2B)",
+            name = "Aura 1.0 Lite (Gemma 2B)",
             shortName = "Gemma 1 Lite",
             description = "Modelo ultraligero de baja huella de memoria para dispositivos con recursos reducidos.",
             fileName = "kofu-gemma-2b-edge-q4_k_m.gguf",
@@ -167,7 +201,7 @@ object LlamaRepository {
         ),
         ModelOption(
             id = "kofu-gemma4",
-            name = "Kofu 4.0 Pro (Gemma 4 E4B)",
+            name = "Aura 4.0 Pro (Gemma 4 E4B)",
             shortName = "Gemma 4 Pro",
             description = "Modelo insignia con máxima capacidad de razonamiento lógico. Requiere teléfono de gama alta (12GB+ RAM).",
             fileName = "kofu-gemma4-edge-q4_k_m.gguf",
@@ -198,6 +232,11 @@ object LlamaRepository {
         effectiveMaxTokens: Int = maxTokens
     ) {
         if (!KofuNativeEngine.isNativeReady()) return
+        KofuNativeEngine.nativeSetLowRamBudget(
+            KofuEditionProfile.isStrict2GbBudgetActive,
+            KofuEditionProfile.STRICT_2GB_PROCESS_RSS_MB,
+            BuildConfig.DEBUG
+        )
         KofuNativeEngine.nativeSetPreferredAccelerator(preferredAccelerator.code)
         KofuNativeEngine.nativeSetGenerationConfig(
             temperature = effectiveTemp,
@@ -255,7 +294,7 @@ object LlamaRepository {
         temperature = prefs.getFloat("temperature", edition.defaultTemperature)
         topP = prefs.getFloat("top_p", 0.9f)
         repeatPenalty = prefs.getFloat("repeat_penalty", 1.1f)
-        maxTokens = prefs.getInt("max_tokens", edition.defaultMaxTokens)
+        maxTokens = prefs.getInt("max_tokens", KofuEditionProfile.effectiveMaxTokens)
         systemPrompt = prefs.getString("system_prompt", edition.defaultSystemPrompt) ?: edition.defaultSystemPrompt
         isDebugMode = prefs.getBoolean("debug_mode", false)
 
@@ -523,6 +562,7 @@ object LlamaRepository {
 
         val lastUserIdx = history.indexOfLast { it.role.equals("user", ignoreCase = true) }
         val ctx = appContext
+        currentPrefillStageText = "Buscando contexto..."
         if (isRagEnabled && lastUserIdx >= 0 && ctx != null) {
             val userQuery = history[lastUserIdx].content
             val ragResult = KofuRagDatabase.getInstance(ctx).retrieveDynamicContext(userQuery)
@@ -544,6 +584,7 @@ object LlamaRepository {
                 effectiveHistory = mutable
             }
         }
+        currentPrefillStageText = "Preparando respuesta..."
 
         val effectiveMaxTokens = maxTokensOverride ?: maxTokens
         val fullPromptRepresentation = buildString {
@@ -605,7 +646,7 @@ object LlamaRepository {
 
         // Ejecución C++ Nativa 100% Offline
         if (!KofuNativeEngine.nativeIsModelLoaded()) {
-            trySend("Error [Kofu Engine]: No hay un modelo GGUF cargado en memoria local. Importa un modelo o espera a que finalice la descarga.")
+            trySend("Error [Aura Engine]: No hay un modelo GGUF cargado en memoria local. Importa un modelo o espera a que finalice la descarga.")
             close()
             return@callbackFlow
         }
@@ -616,9 +657,9 @@ object LlamaRepository {
             effectiveMaxTokens = effectiveMaxTokens
         )
 
-        val boundedHistory = if (effectiveHistory.size > 16) {
+        val boundedHistory = if (effectiveHistory.size > 26) {
             val sysTurns = effectiveHistory.filter { it.role == "system" }
-            val recentTurns = effectiveHistory.filter { it.role != "system" }.takeLast(14)
+            val recentTurns = effectiveHistory.filter { it.role != "system" }.takeLast(24)
             sysTurns + recentTurns
         } else {
             effectiveHistory
@@ -648,21 +689,31 @@ object LlamaRepository {
 
         val totalTime = System.currentTimeMillis() - startTime
         val seconds = totalTime / 1000.0
-        var tps = if (seconds > 0) tokenCount / seconds else 0.0
+        val fallbackTps = if (seconds > 0) tokenCount / seconds else 0.0
 
         val statsJson = KofuNativeEngine.nativeGetStatsJson()
         var nativeRssMb = 0L
+        var nativeAnonRssMb = 0L
         var availRamMb = 0L
         var tier = KofuNativeEngine.nativeGetActiveHardwareTier()
         var soc = ""
+        var decodeTps = fallbackTps
+        var govState = "OFF"
         try {
             val json = JSONObject(statsJson)
             nativeRssMb = json.optLong("memory_rss_mb", 0L)
+            nativeAnonRssMb = json.optLong("anon_rss_mb", 0L)
             availRamMb = json.optLong("available_ram_mb", 0L)
             tier = json.optString("hardware_tier", tier)
             soc = json.optString("soc_model", "")
+            govState = json.optString("ram_governor_state", "OFF")
+            val parsedDecodeTps = json.optDouble("decode_tokens_per_sec", 0.0)
             val parsedTps = json.optDouble("tokens_per_sec", 0.0)
-            if (parsedTps > 0.0) tps = parsedTps
+            decodeTps = when {
+                parsedDecodeTps > 0.0 -> parsedDecodeTps
+                parsedTps > 0.0 -> parsedTps
+                else -> fallbackTps
+            }
         } catch (e: Exception) {
             Log.w(TAG, "No se pudo parsear statsJson nativo", e)
         }
@@ -671,15 +722,18 @@ object LlamaRepository {
         lastBenchmarkStats = statsJson
         debugMetrics = DebugMetrics(
             tokensGenerated = tokenCount,
-            tokensPerSec = tps,
+            tokensPerSec = decodeTps,
+            decodeTokensPerSec = decodeTps,
             latencyFirstTokenMs = firstTokenTime,
             totalDurationMs = totalTime,
             memoryRssMb = nativeRssMb,
+            anonRssMb = nativeAnonRssMb,
             availableRamMb = availRamMb,
             activeBackend = "${activeBackend.displayName} [$tier]",
             activeModel = currentModelName,
             hardwareTier = tier,
             socModel = soc,
+            ramGovernorState = govState,
             activeRagDomain = ragDomainLabel,
             ragLookupMs = ragLookupMs,
             ragChunksCount = ragChunksCount,
@@ -720,9 +774,12 @@ object LlamaRepository {
         var totalRagMs = 0L
         var totalInferenceMs = 0L
         var totalTokensGen = 0
+        var totalTtftMs = 0L
+        var maxTtftMs = 0L
         var llmEvaluatedCount = 0
         var minAvailRamMb = Long.MAX_VALUE
         var maxRssMb = 0L
+        var maxAnonRssMb = 0L
         var errorCount = 0
 
         val startAllMs = System.currentTimeMillis()
@@ -775,11 +832,18 @@ object LlamaRepository {
 
             if (runLlmOnThisItem) {
                 totalTokensGen += debugMetrics.tokensGenerated
+                totalTtftMs += debugMetrics.latencyFirstTokenMs
+                if (debugMetrics.latencyFirstTokenMs > maxTtftMs) {
+                    maxTtftMs = debugMetrics.latencyFirstTokenMs
+                }
                 if (debugMetrics.availableRamMb > 0 && debugMetrics.availableRamMb < minAvailRamMb) {
                     minAvailRamMb = debugMetrics.availableRamMb
                 }
                 if (debugMetrics.memoryRssMb > maxRssMb) {
                     maxRssMb = debugMetrics.memoryRssMb
+                }
+                if (debugMetrics.anonRssMb > maxAnonRssMb) {
+                    maxAnonRssMb = debugMetrics.anonRssMb
                 }
             }
 
@@ -826,7 +890,10 @@ object LlamaRepository {
             put("avg_rag_lookup_ms", totalRagMs.toDouble() / questions.size)
             put("total_tokens_generated", totalTokensGen)
             put("avg_tokens_per_sec", avgTps)
+            put("avg_ttft_ms", if (llmEvaluatedCount > 0) totalTtftMs.toDouble() / llmEvaluatedCount else 0.0)
+            put("max_ttft_ms", maxTtftMs)
             put("max_rss_mb", maxRssMb)
+            put("max_anon_rss_mb", maxAnonRssMb)
             put("min_available_ram_mb", if (minAvailRamMb == Long.MAX_VALUE) 0 else minAvailRamMb)
             put("persisted_session_messages", benchSession.messages.size)
             put("error_count", errorCount)
@@ -849,11 +916,130 @@ object LlamaRepository {
         }
     }
 
+    private val embedderDownloadInProgress = AtomicBoolean(false)
+
     fun getExpectedMinSize(modelOption: ModelOption): Long {
         return when (modelOption.id) {
+            "kofu-go-1b" -> 650_000_000L
+            "kofu-embed-minilm" -> 15_000_000L
             "kofu-2b" -> 1_200_000_000L
             "kofu-gemma4" -> 4_500_000_000L
             else -> 1_400_000_000L
+        }
+    }
+
+    /**
+     * Descarga el micro-embedder GGUF (~24 MB) en segundo plano detrás del modelo principal,
+     * sin interferir con la notificación/progreso principal y con respaldo BM25 si está offline.
+     */
+    fun downloadEmbedderInBackgroundIfNeeded(context: Context) {
+        val appCtx = context.applicationContext
+        val externalDir = appCtx.getExternalFilesDir(null) ?: return
+        val existing = getLocalModelFile(appCtx, EMBEDDER_MODEL)
+            ?: externalDir.listFiles { f ->
+                f.isFile && f.name.endsWith(".gguf", ignoreCase = true) &&
+                    (f.name.contains("minilm", ignoreCase = true) || f.name.contains("embed", ignoreCase = true)) &&
+                    f.length() >= getExpectedMinSize(EMBEDDER_MODEL)
+            }?.firstOrNull()
+        if (existing != null) {
+            ensureEmbedderReady(appCtx)
+            return
+        }
+        if (isDownloadingModel || isDownloadPaused) return
+        if (!embedderDownloadInProgress.compareAndSet(false, true)) return
+
+        repositoryScope.launch(Dispatchers.IO) {
+            try {
+                val targetFile = File(externalDir, EMBEDDER_MODEL.fileName)
+                val partFile = File(externalDir, "${EMBEDDER_MODEL.fileName}.part")
+                if (!targetFile.canonicalPath.startsWith(externalDir.canonicalPath) ||
+                    !partFile.canonicalPath.startsWith(externalDir.canonicalPath)
+                ) {
+                    return@launch
+                }
+
+                val client = OkHttpClient.Builder()
+                    .connectTimeout(20, TimeUnit.SECONDS)
+                    .readTimeout(90, TimeUnit.SECONDS)
+                    .followRedirects(true)
+                    .followSslRedirects(true)
+                    .build()
+
+                val existingLen = if (partFile.exists()) partFile.length() else 0L
+                val reqBuilder = Request.Builder().url(EMBEDDER_MODEL.downloadUrl)
+                if (existingLen > 0L) {
+                    reqBuilder.header("Range", "bytes=$existingLen-")
+                }
+
+                client.newCall(reqBuilder.build()).execute().use { resp ->
+                    val code = resp.code
+                    if (code != 200 && code != 206) {
+                        if (code == 416) partFile.delete()
+                        return@launch
+                    }
+                    val body = resp.body ?: return@launch
+                    val isResume = (code == 206)
+                    val buffer = ByteArray(16 * 1024)
+                    FileOutputStream(partFile, isResume).use { out ->
+                        body.byteStream().use { inp ->
+                            while (true) {
+                                val r = inp.read(buffer)
+                                if (r == -1) break
+                                out.write(buffer, 0, r)
+                            }
+                        }
+                    }
+                }
+
+                val minSize = getExpectedMinSize(EMBEDDER_MODEL)
+                if (partFile.exists() && partFile.length() >= minSize && hasValidGgufHeader(partFile)) {
+                    if (targetFile.exists()) targetFile.delete()
+                    if (!partFile.renameTo(targetFile)) {
+                        partFile.inputStream().use { inp ->
+                            FileOutputStream(targetFile).use { out -> inp.copyTo(out) }
+                        }
+                        partFile.delete()
+                    }
+                    Log.i(TAG, "Micro-embedder RAG descargado detrás del modelo principal (${targetFile.length() / (1024 * 1024)} MB)")
+                    ensureEmbedderReady(appCtx)
+                }
+            } catch (e: Exception) {
+                Log.w(TAG, "Descarga secundaria de micro-embedder omitida/offline (respaldo BM25 activo): ${e.message}")
+            } finally {
+                embedderDownloadInProgress.set(false)
+            }
+        }
+    }
+
+    private fun hasValidGgufHeader(file: File): Boolean {
+        if (!file.exists() || file.length() < 16L) return false
+        val header = ByteArray(4)
+        val n = FileInputStream(file).use { it.read(header) }
+        return n == 4 &&
+            header[0] == 'G'.code.toByte() &&
+            header[1] == 'G'.code.toByte() &&
+            header[2] == 'U'.code.toByte() &&
+            header[3] == 'F'.code.toByte()
+    }
+
+    fun ensureEmbedderReady(context: Context) {
+        if (!KofuNativeEngine.isNativeReady()) return
+        val appCtx = context.applicationContext
+        val externalDir = appCtx.getExternalFilesDir(null) ?: return
+        val embedFile = getLocalModelFile(appCtx, EMBEDDER_MODEL)
+            ?: externalDir.listFiles { f ->
+                f.isFile && f.name.endsWith(".gguf", ignoreCase = true) &&
+                    (f.name.contains("minilm", ignoreCase = true) || f.name.contains("embed", ignoreCase = true)) &&
+                    f.length() >= getExpectedMinSize(EMBEDDER_MODEL)
+            }?.firstOrNull()
+            ?: return
+
+        if (!KofuNativeEngine.nativeIsEmbedModelLoaded()) {
+            if (KofuNativeEngine.nativeLoadEmbedModel(embedFile.absolutePath)) {
+                KofuRagDatabase.getInstance(appCtx).syncSemanticEmbeddings()
+            }
+        } else {
+            KofuRagDatabase.getInstance(appCtx).syncSemanticEmbeddings()
         }
     }
 
@@ -1019,10 +1205,12 @@ object LlamaRepository {
                 Log.i(TAG, "Modelo seleccionado encontrado localmente: ${selectedFile.name}. Cargando...")
                 loadModel(context, Uri.fromFile(selectedFile), scope)
             }
+            downloadEmbedderInBackgroundIfNeeded(context)
             return
         }
 
         if (KofuNativeEngine.nativeIsModelLoaded()) {
+            downloadEmbedderInBackgroundIfNeeded(context)
             return
         }
 
@@ -1034,16 +1222,24 @@ object LlamaRepository {
                 savePreferences(context)
                 Log.i(TAG, "Modelo alternativo encontrado localmente: ${local.name}. Cargando...")
                 loadModel(context, Uri.fromFile(local), scope)
+                downloadEmbedderInBackgroundIfNeeded(context)
                 return
             }
         }
 
         val anyLocalGguf = context.getExternalFilesDir(null)
-            ?.listFiles { f -> f.isFile && f.name.endsWith(".gguf", ignoreCase = true) && f.length() > 10_000_000L }
+            ?.listFiles { f ->
+                f.isFile &&
+                    f.name.endsWith(".gguf", ignoreCase = true) &&
+                    !f.name.equals(EMBEDDER_MODEL.fileName, ignoreCase = true) &&
+                    !f.name.contains("minilm", ignoreCase = true) &&
+                    f.length() > 200_000_000L
+            }
             ?.firstOrNull()
         if (anyLocalGguf != null) {
             Log.i(TAG, "Modelo local GGUF detectado: ${anyLocalGguf.name}. Cargando offline...")
             loadModel(context, Uri.fromFile(anyLocalGguf), scope)
+            downloadEmbedderInBackgroundIfNeeded(context)
             return
         }
 
@@ -1061,5 +1257,6 @@ object LlamaRepository {
     fun onDownloadedModelReady(context: Context, targetFile: File) {
         Log.i(TAG, "Modelo descargado por Foreground Service: ${targetFile.name}. Cargando en C++...")
         loadModel(context, Uri.fromFile(targetFile), repositoryScope)
+        downloadEmbedderInBackgroundIfNeeded(context)
     }
 }

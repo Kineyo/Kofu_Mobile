@@ -203,7 +203,11 @@ fun DebugHud(
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Text(
-                        text = "HW:${metrics.hardwareTier}",
+                        text = if (metrics.ramGovernorState != "OFF") {
+                            "HW:${metrics.hardwareTier}•${metrics.ramGovernorState}"
+                        } else {
+                            "HW:${metrics.hardwareTier}"
+                        },
                         color = colors.successAccent,
                         fontSize = 10.sp,
                         fontWeight = FontWeight.Bold,

@@ -81,7 +81,7 @@ fun TermsDialog(
                             letterSpacing = 1.sp
                         )
                         Text(
-                            text = "Kofu Assistant • Licencia Gemma",
+                            text = "Aura • Licencia Gemma",
                             color = colors.onSurfaceSecondary,
                             fontSize = 11.sp
                         )
@@ -114,17 +114,17 @@ fun TermsDialog(
                 ) {
                     FormalTermCard(
                         title = "1. PRIVACIDAD Y SOBERANÍA LOCAL",
-                        content = "Kofu procesa tus conversaciones exclusivamente de manera local en el dispositivo o a través de tu servidor Ollama en red privada. Ningún mensaje, prompt, metadato o dato personal se transmite a la nube ni a servidores externos de terceros. Los datos permanecen estrictamente bajo el control del usuario."
+                        content = "Aura procesa tus conversaciones exclusivamente de manera local en el dispositivo o a través de tu servidor Ollama en red privada. Ningún mensaje, prompt, metadato o dato personal se transmite a la nube ni a servidores externos de terceros. Los datos permanecen estrictamente bajo el control del usuario."
                     )
 
                     FormalTermCard(
                         title = "2. MODELO BASE Y LICENCIA GEMMA",
-                        content = "Kofu está optimizado sobre la familia de modelos abiertos Gemma de Google DeepMind. El uso de los pesos e inferencias está sujeto a los Términos de Uso de Gemma (Gemma Terms of Use) y la Licencia Apache 2.0 en componentes de software libre aplicables. Queda garantizado el derecho a uso personal, educativo y comercial conforme a dichos términos."
+                        content = "Aura está optimizada sobre la familia de modelos abiertos Gemma de Google DeepMind. El uso de los pesos e inferencias está sujeto a los Términos de Uso de Gemma (Gemma Terms of Use) y la Licencia Apache 2.0 en componentes de software libre aplicables. Queda garantizado el derecho a uso personal, educativo y comercial conforme a dichos términos."
                     )
 
                     FormalTermCard(
                         title = "3. POLÍTICA DE USO PROHIBIDO",
-                        content = "De conformidad con los lineamientos de Google DeepMind y las directrices de IA responsable, está estrictamente prohibido utilizar Kofu para:\n" +
+                        content = "De conformidad con los lineamientos de Google DeepMind y las directrices de IA responsable, está estrictamente prohibido utilizar Aura para:\n" +
                                 "• Generar contenido ilícito, violento, acoso o incitación al odio.\n" +
                                 "• Desarrollar código malicioso, exploits o ataques contra infraestructura ajena.\n" +
                                 "• Difundir desinformación deliberada o asesoramiento médico/financiero crítico sin validación profesional.\n" +
@@ -133,7 +133,7 @@ fun TermsDialog(
 
                     FormalTermCard(
                         title = "4. EXENCIÓN DE RESPONSABILIDAD",
-                        content = "Las respuestas son generadas por modelos probabilísticos de lenguaje y pueden contener imprecisiones. El usuario debe evaluar la exactitud y adecuación de las respuestas antes de tomar decisiones técnicas o críticas. Kofu Assistant se proporciona 'tal cual', sin garantías implícitas."
+                        content = "Las respuestas son generadas por modelos probabilísticos de lenguaje y pueden contener imprecisiones. El usuario debe evaluar la exactitud y adecuación de las respuestas antes de tomar decisiones técnicas o críticas. Aura se proporciona 'tal cual', sin garantías implícitas."
                     )
 
                     HorizontalDivider(color = colors.divider, thickness = 1.dp)
@@ -143,7 +143,7 @@ fun TermsDialog(
                         horizontalArrangement = Arrangement.Center
                     ) {
                         Text(
-                            text = "Kofu Assistant v${BuildConfig.VERSION_NAME} • Build Edge 2026",
+                            text = "Aura v${BuildConfig.VERSION_NAME} • Build Edge 2026",
                             color = colors.onSurfaceMuted,
                             fontSize = 10.sp,
                             fontFamily = FontFamily.Monospace

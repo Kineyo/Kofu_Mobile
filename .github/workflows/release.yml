@@ -1,11 +1,6 @@
-name: Build & Release Kofu Mobile (3 Silicon Editions)
+name: Build & Release Aura (Branch kofu-go)
 
 on:
-  push:
-    branches:
-      - main
-    tags:
-      - '*'
   workflow_dispatch:
 
 permissions:
@@ -13,7 +8,7 @@ permissions:
 
 jobs:
   build-and-release:
-    name: Build 3 Silicon Editions (7nm / 5nm / <5nm Frontier)
+    name: Build Aura (7nm Legacy ARMv8-a)
     runs-on: ubuntu-latest
     timeout-minutes: 60
 
@@ -44,52 +39,35 @@ jobs:
       - name: Make Gradle Wrapper Executable
         run: chmod +x Kofu_Assistant/gradlew
 
-      - name: Run Unit Tests & 500-Question RAG Stress Suite
+      - name: Run Unit Tests & 500-Question RAG Stress Suite (7nm)
         run: |
           cd Kofu_Assistant
-          ./gradlew testNode5nmDebugUnitTest --no-daemon --stacktrace
+          ./gradlew testNode7nmDebugUnitTest --no-daemon --stacktrace
 
-      - name: Build 3 Silicon Edition APKs (7nm Legacy / 5nm Mainstream / <5nm Frontier)
+      - name: Build Aura 7nm Legacy APKs
         run: |
           cd Kofu_Assistant
           ./gradlew \
             assembleNode7nmRelease \
-            assembleNode5nmRelease \
-            assembleFrontierSub5nmRelease \
-            assembleNode5nmDebug \
+            assembleNode7nmDebug \
             --no-daemon --stacktrace
 
       - name: Organize Release Artifacts
         run: |
           mkdir -p build-artifacts
-          VERSION_TAG="${GITHUB_REF_NAME:-v2.1.5}"
+          VERSION_TAG="${GITHUB_REF_NAME:-kofu-go}"
 
-          # 1. Edición 7nm Legacy (Android 5.0–7.x, ARMv8.0-A universal, Síntesis & Consulta Factual Rápida)
           APK_7NM="Kofu_Assistant/app/build/outputs/apk/node7nm/release/app-node7nm-release.apk"
           if [ -f "$APK_7NM" ]; then
-            cp "$APK_7NM" "build-artifacts/Kofu_Assistant-${VERSION_TAG}-7nm-Android5-7-arm64-v8a-release.apk"
+            cp "$APK_7NM" "build-artifacts/Aura-${VERSION_TAG}-7nm-arm64-v8a-release.apk"
+            cp "$APK_7NM" "build-artifacts/app-release.apk"
           fi
 
-          # 2. Edición 5nm Mainstream (Android 8.0–15.0, ARMv8.2-A DotProd+FP16, Ingeniería & Código)
-          APK_5NM="Kofu_Assistant/app/build/outputs/apk/node5nm/release/app-node5nm-release.apk"
-          if [ -f "$APK_5NM" ]; then
-            cp "$APK_5NM" "build-artifacts/Kofu_Assistant-${VERSION_TAG}-5nm-Android8-15-arm64-v8a-release.apk"
-            cp "$APK_5NM" "build-artifacts/app-release.apk"
+          APK_7NM_DBG="Kofu_Assistant/app/build/outputs/apk/node7nm/debug/app-node7nm-debug.apk"
+          if [ -f "$APK_7NM_DBG" ]; then
+            cp "$APK_7NM_DBG" "build-artifacts/Aura-${VERSION_TAG}-7nm-arm64-v8a-debug.apk"
           fi
 
-          # 3. Edición <5nm Frontier Flagship (Android 16+, ARMv8.6-A/ARMv9 i8mm, Razonamiento Profundo)
-          APK_FRONTIER="Kofu_Assistant/app/build/outputs/apk/frontierSub5nm/release/app-frontierSub5nm-release.apk"
-          if [ -f "$APK_FRONTIER" ]; then
-            cp "$APK_FRONTIER" "build-artifacts/Kofu_Assistant-${VERSION_TAG}-Frontier-Sub5nm-Android16-arm64-v8a-release.apk"
-          fi
-
-          # 4. APK Debug 5nm para pruebas ADB / Consola
-          APK_5NM_DBG="Kofu_Assistant/app/build/outputs/apk/node5nm/debug/app-node5nm-debug.apk"
-          if [ -f "$APK_5NM_DBG" ]; then
-            cp "$APK_5NM_DBG" "build-artifacts/Kofu_Assistant-${VERSION_TAG}-5nm-Android8-15-arm64-v8a-debug.apk"
-          fi
-
-          # Generar sumas de verificación SHA-256
           cd build-artifacts
           sha256sum *.apk > SHA256SUMS.txt
           ls -lh
@@ -97,19 +75,6 @@ jobs:
       - name: Upload Artifacts to Workflow
         uses: actions/upload-artifact@v4
         with:
-          name: kofu-mobile-3-editions-apks
+          name: aura-kofu-go-7nm-apks
           path: build-artifacts/*
           retention-days: 14
-
-      - name: Create GitHub Release
-        if: startsWith(github.ref, 'refs/tags/')
-        uses: softprops/action-gh-release@v2
-        with:
-          name: "Kofu Mobile ${{ github.ref_name }} [3 Ediciones Edge]"
-          tag_name: ${{ github.ref_name }}
-          draft: false
-          prerelease: false
-          generate_release_notes: true
-          files: build-artifacts/*
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

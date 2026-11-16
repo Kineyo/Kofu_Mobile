@@ -1,7 +1,9 @@
 package com.kofu.assistant
 
 import android.Manifest
+import android.app.ActivityManager
 import android.content.ComponentCallbacks2
+import android.content.Context
 import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Bundle
@@ -16,6 +18,7 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.lifecycleScope
+import com.kofu.assistant.data.KofuEditionProfile
 import com.kofu.assistant.data.rag.KofuRagDatabase
 import com.kofu.assistant.repository.BackendMode
 import com.kofu.assistant.repository.KofuNativeEngine
@@ -65,12 +68,20 @@ class MainActivity : ComponentActivity() {
             KofuFontScale.valueOf(savedFontScaleName ?: KofuFontScale.STANDARD.name)
         }.getOrDefault(KofuFontScale.STANDARD)
 
+        val am = getSystemService(Context.ACTIVITY_SERVICE) as? ActivityManager
+        if (am != null) {
+            val memInfo = ActivityManager.MemoryInfo()
+            am.getMemoryInfo(memInfo)
+            KofuEditionProfile.configureForDeviceRam(memInfo.totalMem)
+        }
+
         val repository = LlamaRepository
         repository.loadPreferences(this)
 
-        // Pre-indexar base RAG offline SQLite FTS4 + BM25 en segundo plano
+        // Pre-indexar base RAG offline SQLite FTS4 + BM25 y micro-embedder GGUF en segundo plano
         lifecycleScope.launch(Dispatchers.IO) {
             KofuRagDatabase.getInstance(applicationContext)
+            repository.ensureEmbedderReady(applicationContext)
         }
 
         // Operación 100% offline por defecto; solo sondear Ollama si el modo elegido lo requiere
@@ -105,11 +116,10 @@ class MainActivity : ComponentActivity() {
 
     override fun onTrimMemory(level: Int) {
         super.onTrimMemory(level)
-        if (level >= ComponentCallbacks2.TRIM_MEMORY_RUNNING_CRITICAL ||
-            level >= ComponentCallbacks2.TRIM_MEMORY_BACKGROUND
-        ) {
+        if (level >= ComponentCallbacks2.TRIM_MEMORY_RUNNING_MODERATE) {
+            KofuRagDatabase.getInstanceOrNull()?.onLowMemoryTrim()
             if (KofuNativeEngine.isNativeReady()) {
-                KofuNativeEngine.nativeTrimMemory()
+                KofuNativeEngine.nativeTrimMemoryLevel(level)
             }
         }
     }

@@ -38,7 +38,7 @@ struct GenerationConfig {
     float repeat_penalty{1.1f};
     int32_t max_tokens{2048};
     std::string system_prompt{
-        "Eres Kofu, un asistente de IA local útil, atento, privado y respetuoso. Responde de forma clara, precisa y concisa en español."
+        "Eres Aura, una asistente educativa local útil, atenta y privada. Responde de forma clara, precisa y concisa en español."
     };
 };
 
@@ -46,12 +46,16 @@ struct BenchmarkStats {
     uint32_t tokens_generated{0};
     double elapsed_seconds{0.0};
     double tokens_per_second{0.0};
+    double decode_tokens_per_second{0.0};
+    double prefill_ms{0.0};
     size_t memory_rss_mb{0};
+    size_t anon_rss_mb{0};
     size_t available_ram_mb{0};
     int32_t active_n_ctx{0};
     std::string backend_name{"llama.cpp ARMv8"};
     std::string hardware_tier{"NONE"};
     std::string soc_model{"unknown"};
+    std::string ram_governor_state{"OFF"};
 };
 
 class KofuEngine {
@@ -67,7 +71,21 @@ public:
     int get_backend_type() const;
     std::string get_active_hardware_tier() const;
     void set_preferred_accelerator(int mode);
-    void trim_memory();
+    void set_low_ram_budget(bool enabled, size_t max_rss_mb, bool debug_governor_enabled = false);
+    void trim_memory(int level = 80);
+
+    // Micro-embedder GGUF secundario para RAG semántico local
+    bool load_embed_model(const std::string& filepath);
+    void unload_embed_model();
+    bool is_embed_model_loaded() const;
+    int32_t get_embed_dim() const;
+    std::vector<int8_t> embed_text_int8(const std::string& text);
+    static std::vector<float> score_int8_cosine(
+        const std::vector<int8_t>& query_vec,
+        const int8_t* corpus_flat,
+        int32_t num_docs,
+        int32_t dim
+    );
 
     void set_generation_config(const GenerationConfig& config);
 
@@ -85,6 +103,7 @@ public:
     std::string get_stats_json() const;
 
     static size_t get_process_rss_mb();
+    static size_t get_process_anon_rss_mb();
     static size_t get_available_ram_mb();
 
 private:
@@ -96,15 +115,22 @@ private:
 
     void detect_snapdragon_topology();
     bool initialize_with_hardware_fallback(const std::string& source_path, const std::string& display_name);
+    void warmup_system_prompt_locked();
     void unload_model_locked();
+    void unload_embed_model_locked();
     void free_threadpools_locked();
     llama_context* init_context_with_fallback(llama_model* model, HardwareTier tier);
 
     mutable std::mutex engine_mutex_;
+    mutable std::mutex embed_mutex_;
     mutable std::mutex stats_mutex_;
     std::unique_ptr<ModelLoader> loader_;
     llama_model* lmodel_{nullptr};
     llama_context* lctx_{nullptr};
+    llama_model* embed_model_{nullptr};
+    llama_context* embed_ctx_{nullptr};
+    int32_t embed_dim_{0};
+    std::atomic<bool> is_embed_loaded_{false};
     ggml_threadpool* threadpool_{nullptr};
     ggml_threadpool* threadpool_batch_{nullptr};
     std::string loaded_path_;
@@ -127,6 +153,9 @@ private:
     std::atomic<bool> is_model_loaded_{false};
     std::atomic<bool> is_generating_{false};
     std::atomic<bool> is_cancelled_{false};
+    std::atomic<bool> low_ram_mode_{true};
+    std::atomic<bool> debug_ram_governor_enabled_{false};
+    std::atomic<size_t> max_rss_budget_mb_{1850};
 
     BenchmarkStats last_stats_{};
 };

@@ -700,9 +700,9 @@ fun SettingsDialog(
                                     horizontalArrangement = Arrangement.spacedBy(4.dp)
                                 ) {
                                     listOf(
-                                        "General" to "Eres Kofu, un asistente de IA formal, preciso y directo. Responde de forma técnica y concisa en español.",
-                                        "Programador" to "Eres Kofu, un ingeniero de software senior. Responde exclusivamente con soluciones óptimas y código limpio.",
-                                        "Conciso" to "Eres Kofu. Responde de manera concisa y directa, sin introducciones innecesarias."
+                                        "General" to "Eres Aura, una asistente educativa formal, precisa y directa. Responde de forma técnica y concisa en español.",
+                                        "Programador" to "Eres Aura, asistente experta en ingeniería de software y programación. Responde con soluciones óptimas y código limpio.",
+                                        "Escolar" to "Eres Aura, tutora escolar clara en matemáticas, español, ciencias e historia. Explica paso a paso de manera concisa."
                                     ).forEach { (label, promptText) ->
                                         Surface(
                                             color = colors.surface,
@@ -902,7 +902,7 @@ fun SettingsDialog(
                             ) {
                                 Column(modifier = Modifier.weight(1f)) {
                                     Text(
-                                        text = "Kofu Mobile v${AppUpdateManager.CURRENT_VERSION_NAME}",
+                                        text = "Aura v${AppUpdateManager.CURRENT_VERSION_NAME}",
                                         fontSize = 11.5.sp,
                                         fontWeight = FontWeight.Bold,
                                         color = colors.onSurface
