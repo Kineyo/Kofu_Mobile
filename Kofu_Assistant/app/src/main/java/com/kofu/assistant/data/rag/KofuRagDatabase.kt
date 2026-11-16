@@ -186,7 +186,7 @@ object DynamicDomainRouter {
             }
         }
 
-        return if (bestScore > 0) bestDomain else RagDomain.GENERAL_FACTS_ES
+        return if (bestScore > 0) bestDomain else RagDomain.CHITCHAT
     }
 }
 
@@ -213,7 +213,8 @@ class KofuRagDatabase private constructor(
         private const val MAX_CONTEXT_CHARS = 480
         private const val META_DATASET_HASH = "dataset_hash"
         private const val RRF_K = 60.0
-        private const val MIN_SEMANTIC_COSINE = 0.25f
+        private const val MIN_SEMANTIC_COSINE = 0.42f
+        private const val MIN_SEMANTIC_ONLY_COSINE = 0.50f
 
         @Volatile
         private var instance: KofuRagDatabase? = null
@@ -449,6 +450,7 @@ class KofuRagDatabase private constructor(
             }
         }
 
+        val bm25Filtered = bm25Ranked.filter { it.second >= 1.0 }
         val selected: List<RagDocument>
         val topScore: Double
 
@@ -463,24 +465,37 @@ class KofuRagDatabase private constructor(
                     KofuNativeEngine.nativeScoreInt8CosineDirect(qVec, directBuf, numDocs, dim)
                 } else null
                 if (cosScores != null) {
+                    val minCos = if (bm25Filtered.isEmpty()) MIN_SEMANTIC_ONLY_COSINE else MIN_SEMANTIC_COSINE
                     cosScores.indices
+                        .filter { pos -> cosScores[pos] >= minCos }
                         .map { pos -> docsSnapshot[docIndices[pos]] to cosScores[pos] }
                         .sortedByDescending { it.second }
                         .take(8)
                 } else emptyList()
             } else emptyList()
 
-            if (semanticRanked.isNotEmpty()) {
-                val fused = computeRrfFusion(bm25Ranked, semanticRanked, limit = maxChunks)
-                selected = fused.map { it.first }
-                topScore = fused.firstOrNull()?.second ?: 0.0
-            } else {
-                selected = bm25Ranked.filter { it.second >= 1.0 }.take(maxChunks).map { it.first }
-                topScore = bm25Ranked.firstOrNull()?.second ?: 0.0
+            when {
+                bm25Filtered.isNotEmpty() && semanticRanked.isNotEmpty() -> {
+                    val fused = computeRrfFusion(bm25Filtered, semanticRanked, limit = maxChunks)
+                    selected = fused.map { it.first }
+                    topScore = fused.firstOrNull()?.second ?: 0.0
+                }
+                bm25Filtered.isNotEmpty() -> {
+                    selected = bm25Filtered.take(maxChunks).map { it.first }
+                    topScore = bm25Filtered.firstOrNull()?.second ?: 0.0
+                }
+                semanticRanked.isNotEmpty() -> {
+                    selected = semanticRanked.take(maxChunks).map { it.first }
+                    topScore = semanticRanked.firstOrNull()?.second?.toDouble() ?: 0.0
+                }
+                else -> {
+                    selected = emptyList()
+                    topScore = 0.0
+                }
             }
         } else {
-            selected = bm25Ranked.filter { it.second >= 1.0 }.map { it.first }
-            topScore = bm25Ranked.firstOrNull()?.second ?: 0.0
+            selected = bm25Filtered.take(maxChunks).map { it.first }
+            topScore = bm25Filtered.firstOrNull()?.second ?: 0.0
         }
 
         val formatted = buildCompactContext(selected, maxContextChars)

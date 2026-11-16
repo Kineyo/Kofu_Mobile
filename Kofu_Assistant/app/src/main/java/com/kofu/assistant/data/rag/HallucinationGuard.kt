@@ -17,15 +17,16 @@ data class GroundedInferenceRequest(
 object HallucinationGuard {
 
     private val REALTIME_OFFLINE_PATTERNS = listOf(
-        "clima hoy", "temperatura actual", "noticias de hoy", "precio del dolar hoy",
-        "quien gano ayer", "marcador en vivo", "bolsa hoy", "hora exacta en vivo",
-        "busca en internet", "googlea"
+        "clima hoy", "temperatura actual", "noticias de hoy", "precio del dolar",
+        "en vivo", "quien gano ayer", "marcador en vivo", "bolsa hoy",
+        "hora exacta", "busca en internet", "googlea", "ahora mismo"
     )
 
     private val FACTUAL_KEYWORDS = setOf(
-        "quien", "cuando", "cuanto", "cuantos", "cual", "formula", "valor", "constante",
-        "velocidad", "capital", "fecha", "ley", "teorema", "complejidad", "codigo",
-        "diferencia", "define", "significa", "ano", "edad", "altura", "distancia"
+        "quien", "cuando", "cuanto", "cuantos", "cuantas", "cual", "cuales",
+        "formula", "valor", "constante", "velocidad", "capital", "fecha",
+        "ley", "teorema", "complejidad", "codigo", "diferencia", "define",
+        "significa", "ano", "edad", "altura", "distancia", "precio", "exacto", "exacta"
     )
 
     fun isFactualOrTechnicalQuery(query: String, domain: RagDomain): Boolean {
@@ -50,7 +51,7 @@ object HallucinationGuard {
         val realtimeOffline = isRealtimeImpossibleOffline(userQuery)
 
         val effectiveTemp = when {
-            realtimeOffline -> minOf(baseTemperature, 0.2f)
+            realtimeOffline -> minOf(baseTemperature, 0.25f)
             hasRagContext -> minOf(baseTemperature, 0.35f)
             factual -> minOf(baseTemperature, 0.40f)
             else -> baseTemperature
@@ -59,20 +60,19 @@ object HallucinationGuard {
         // Mantener systemPrompt estable para maximizar KV Cache Prefix Reuse entre turnos y consultas
         val groundedSystem = baseSystemPrompt
 
+        // Aura v5 ya incorpora su identidad offline en los pesos; evitar truncar shards en saludos/identidad simple
+        val injectRagBlock = hasRagContext && (ragResult.domain != RagDomain.KOFU_SYSTEM || realtimeOffline)
+
         val augmentedPrompt = when {
             realtimeOffline -> buildString {
                 append(userQuery)
-                append("\n\n[AVISO OFFLINE: Aura opera sin internet; no hay datos en tiempo real.]")
-                if (hasRagContext) {
-                    append("\n[CONTEXTO VERIFICADO - ").append(ragResult.domain.displayName).append("]\n")
-                    append(ragResult.formattedContext).append("\n[/CONTEXTO]")
-                }
+                append("\n\nNota del sistema: Estás 100% offline sin acceso a internet; responde de frente que no puedes consultar datos en tiempo real como clima, noticias o precios de hoy.")
             }
-            hasRagContext -> buildString {
+            injectRagBlock -> buildString {
                 // Inyectar RAG al final del turno para preservar el prefijo KV de sistema e historial previo
                 append(userQuery)
-                append("\n\n[CONTEXTO VERIFICADO - ").append(ragResult.domain.displayName).append("]\n")
-                append(ragResult.formattedContext).append("\n[/CONTEXTO]")
+                append("\n\n[CONTEXTO VERIFICADO - ").append(ragResult.domain.displayName).append("]: ")
+                append(ragResult.formattedContext)
             }
             else -> userQuery
         }
@@ -81,7 +81,7 @@ object HallucinationGuard {
             augmentedUserPrompt = augmentedPrompt,
             effectiveTemperature = effectiveTemp,
             effectiveSystemPrompt = groundedSystem,
-            groundedWithRag = hasRagContext,
+            groundedWithRag = injectRagBlock,
             factualCappingApplied = effectiveTemp < baseTemperature
         )
     }

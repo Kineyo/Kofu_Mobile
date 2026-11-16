@@ -34,12 +34,12 @@ enum class SiliconEdition(
         aiTaskFocus = "Gemma 3 1B 4-bit, RAG Escolar y Respuesta Rápida Offline",
         isaTarget = "ARMv8.0-A NEON Universal (Sin DotProd/i8mm)",
         defaultModelId = "kofu-go-1b",
-        defaultMaxTokens = 224,
-        defaultTemperature = 0.25f,
+        defaultMaxTokens = 256,
+        defaultTemperature = 0.50f,
         maxRagChunks = 1,
         maxRagContextChars = 180,
         maxInMemoryMessages = 100,
-        defaultSystemPrompt = "Eres Aura, asistente educativa en el dispositivo. Responde conciso y preciso en español usando el contexto."
+        defaultSystemPrompt = "Eres Aura, asistente educativa y conversacional 100% offline en español. Nunca necesitas internet ni servidores externos."
     ),
     NODE_5NM_MAINSTREAM(
         code = "5NM_MAINSTREAM",
