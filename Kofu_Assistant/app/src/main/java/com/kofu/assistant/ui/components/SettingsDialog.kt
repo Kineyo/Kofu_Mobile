@@ -61,6 +61,7 @@ import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import com.kofu.assistant.data.AppUpdateManager
 import com.kofu.assistant.data.UpdateCheckResult
+import com.kofu.assistant.repository.AcceleratorPreference
 import com.kofu.assistant.repository.BackendMode
 import com.kofu.assistant.repository.LlamaRepository
 import com.kofu.assistant.ui.theme.KofuDesignSystem
@@ -395,6 +396,103 @@ fun SettingsDialog(
                         }
                     }
 
+                    // SECCIÓN 1.5: ACELERADOR SNAPDRAGON & RAG OFFLINE
+                    FormalSectionTitle(title = "EDGE AI & BASES RAG OFFLINE")
+
+                    Surface(
+                        color = colors.surfaceVariant,
+                        shape = KofuDesignSystem.CardShape,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(KofuDesignSystem.CardShape)
+                            .border(1.dp, colors.divider, KofuDesignSystem.CardShape)
+                    ) {
+                        Column(
+                            modifier = Modifier.padding(10.dp),
+                            verticalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.SpaceBetween
+                            ) {
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text(
+                                        text = "RAG Dinámico Offline (Anti-Alucinación)",
+                                        fontSize = 11.5.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        color = colors.onSurface
+                                    )
+                                    Text(
+                                        text = "Inyecta shards verificados SQLite FTS4 según dominio con límite estricto de tokens.",
+                                        fontSize = 10.sp,
+                                        color = colors.onSurfaceSecondary
+                                    )
+                                }
+                                Switch(
+                                    checked = repository.isRagEnabled,
+                                    onCheckedChange = {
+                                        repository.isRagEnabled = it
+                                        repository.savePreferences(context)
+                                    },
+                                    colors = SwitchDefaults.colors(
+                                        checkedThumbColor = colors.onSurface,
+                                        checkedTrackColor = colors.accentSoft,
+                                        uncheckedThumbColor = colors.onSurfaceMuted,
+                                        uncheckedTrackColor = colors.surface
+                                    )
+                                )
+                            }
+
+                            Text(
+                                text = "ACELERADOR HARDWARE (FALLBACK NPU -> GPU -> CPU)",
+                                fontSize = 10.sp,
+                                fontWeight = FontWeight.Bold,
+                                fontFamily = FontFamily.Monospace,
+                                color = colors.onSurfaceSecondary
+                            )
+
+                            AcceleratorPreference.entries.chunked(2).forEach { rowItems ->
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.spacedBy(5.dp)
+                                ) {
+                                    rowItems.forEach { accel ->
+                                        val isPicked = repository.preferredAccelerator == accel
+                                        Surface(
+                                            color = if (isPicked) colors.accentSoft else colors.surface,
+                                            shape = KofuDesignSystem.ButtonShape,
+                                            modifier = Modifier
+                                                .weight(1f)
+                                                .clip(KofuDesignSystem.ButtonShape)
+                                                .border(
+                                                    1.dp,
+                                                    if (isPicked) colors.onSurfaceSecondary else colors.divider,
+                                                    KofuDesignSystem.ButtonShape
+                                                )
+                                                .clickable {
+                                                    repository.preferredAccelerator = accel
+                                                    repository.savePreferences(context)
+                                                }
+                                        ) {
+                                            Box(
+                                                contentAlignment = Alignment.Center,
+                                                modifier = Modifier.padding(vertical = 6.dp, horizontal = 4.dp)
+                                            ) {
+                                                Text(
+                                                    text = accel.label,
+                                                    fontSize = 10.sp,
+                                                    fontWeight = if (isPicked) FontWeight.Bold else FontWeight.Normal,
+                                                    color = colors.onSurface
+                                                )
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+
                     // SECCIÓN 2: PARÁMETROS IA
                     FormalSectionTitle(title = "PARÁMETROS DE GENERACIÓN")
 
@@ -433,6 +531,8 @@ fun SettingsDialog(
                                     value = repository.temperature,
                                     onValueChange = {
                                         repository.temperature = it
+                                    },
+                                    onValueChangeFinished = {
                                         repository.savePreferences(context)
                                     },
                                     valueRange = 0.0f..1.5f,
@@ -468,10 +568,49 @@ fun SettingsDialog(
                                     value = repository.topP,
                                     onValueChange = {
                                         repository.topP = it
+                                    },
+                                    onValueChangeFinished = {
                                         repository.savePreferences(context)
                                     },
                                     valueRange = 0.1f..1.0f,
                                     steps = 8,
+                                    colors = SliderDefaults.colors(
+                                        thumbColor = colors.onSurface,
+                                        activeTrackColor = colors.onSurfaceSecondary,
+                                        inactiveTrackColor = colors.divider
+                                    )
+                                )
+                            }
+
+                            // Repeat Penalty
+                            Column {
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween
+                                ) {
+                                    Text(
+                                        text = "Penalización de Repetición",
+                                        fontSize = 11.5.sp,
+                                        color = colors.onSurface
+                                    )
+                                    Text(
+                                        text = "%.2f".format(repository.repeatPenalty),
+                                        fontSize = 11.sp,
+                                        fontFamily = FontFamily.Monospace,
+                                        fontWeight = FontWeight.Bold,
+                                        color = colors.onSurface
+                                    )
+                                }
+                                Slider(
+                                    value = repository.repeatPenalty,
+                                    onValueChange = {
+                                        repository.repeatPenalty = it
+                                    },
+                                    onValueChangeFinished = {
+                                        repository.savePreferences(context)
+                                    },
+                                    valueRange = 1.0f..1.5f,
+                                    steps = 9,
                                     colors = SliderDefaults.colors(
                                         thumbColor = colors.onSurface,
                                         activeTrackColor = colors.onSurfaceSecondary,

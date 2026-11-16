@@ -2,8 +2,12 @@
 #include "prompt_formatter.hpp"
 
 #include "llama.h"
+#include "ggml-backend.h"
+#include "ggml-cpu.h"
 
 #include <android/log.h>
+#include <sys/system_properties.h>
+#include <sys/auxv.h>
 #include <unistd.h>
 #include <chrono>
 #include <thread>
@@ -12,34 +16,78 @@
 #include <vector>
 #include <algorithm>
 #include <cmath>
+#include <cstring>
 #include <ctime>
+
+#if defined(__aarch64__)
+#include <asm/hwcap.h>
+#endif
 
 #define TAG "KofuEngine"
 #define LOGI(...) __android_log_print(ANDROID_LOG_INFO, TAG, __VA_ARGS__)
 #define LOGW(...) __android_log_print(ANDROID_LOG_WARN, TAG, __VA_ARGS__)
 #define LOGE(...) __android_log_print(ANDROID_LOG_ERROR, TAG, __VA_ARGS__)
 
-static size_t count_incomplete_utf8_trailing_bytes(const std::string& s) {
+#ifndef KOFU_SILICON_TIER_STR
+#define KOFU_SILICON_TIER_STR "5NM"
+#endif
+
+#ifndef KOFU_ARM_ARCH_STR
+#define KOFU_ARM_ARCH_STR "armv8.2-a+dotprod+fp16"
+#endif
+
+namespace {
+
+size_t count_incomplete_utf8_trailing_bytes(const std::string& s) {
     if (s.empty()) return 0;
     size_t len = s.length();
     for (size_t i = 1; i <= 4 && i <= len; ++i) {
         unsigned char c = static_cast<unsigned char>(s[len - i]);
         if ((c & 0x80) == 0x00) {
-            return 0; // Byte ASCII completo
+            return 0;
         } else if ((c & 0xC0) == 0x80) {
-            continue; // Byte de continuación UTF-8
+            continue;
         } else if ((c & 0xE0) == 0xC0) {
-            return (i < 2) ? i : 0; // Inicio 2 bytes
+            return (i < 2) ? i : 0;
         } else if ((c & 0xF0) == 0xE0) {
-            return (i < 3) ? i : 0; // Inicio 3 bytes
+            return (i < 3) ? i : 0;
         } else if ((c & 0xF8) == 0xF0) {
-            return (i < 4) ? i : 0; // Inicio 4 bytes
+            return (i < 4) ? i : 0;
         } else {
             return 0;
         }
     }
     return 0;
 }
+
+std::string read_sys_prop(const char* key) {
+    char val[PROP_VALUE_MAX] = {0};
+    int len = __system_property_get(key, val);
+    if (len > 0) {
+        return std::string(val, static_cast<size_t>(len));
+    }
+    return "";
+}
+
+bool contains_icase(const char* haystack, const char* needle) {
+    if (!haystack || !needle) return false;
+    std::string h(haystack);
+    std::string n(needle);
+    std::transform(h.begin(), h.end(), h.begin(), ::tolower);
+    std::transform(n.begin(), n.end(), n.begin(), ::tolower);
+    return h.find(n) != std::string::npos;
+}
+
+const char* tier_to_cstr(kofu::HardwareTier tier) {
+    switch (tier) {
+        case kofu::HardwareTier::NPU: return "NPU";
+        case kofu::HardwareTier::GPU: return "GPU";
+        case kofu::HardwareTier::CPU: return "CPU";
+        default: return "NONE";
+    }
+}
+
+} // namespace
 
 namespace kofu {
 
@@ -50,17 +98,314 @@ KofuEngine& KofuEngine::instance() {
 
 KofuEngine::KofuEngine() : loader_(std::make_unique<ModelLoader>()) {
     ggml_backend_load_all();
-    LOGI("KofuEngine con llama.cpp inicializado para Android ARM64");
+    detect_snapdragon_topology();
+    LOGI("KofuEngine Edge AI inicializado | SoC: %s | PerfCores: %zu | RAM libre: %zu MB",
+         soc_model_.c_str(), perf_core_ids_.size(), get_available_ram_mb());
 }
 
 KofuEngine::~KofuEngine() {
     unload_model();
 }
 
+void KofuEngine::detect_snapdragon_topology() {
+    std::string soc = read_sys_prop("ro.soc.model");
+    std::string platform = read_sys_prop("ro.board.platform");
+    std::string mfg = read_sys_prop("ro.soc.manufacturer");
+    if (!soc.empty()) {
+        soc_model_ = mfg.empty() ? soc : (mfg + " " + soc);
+        if (!platform.empty()) soc_model_ += " (" + platform + ")";
+    } else if (!platform.empty()) {
+        soc_model_ = platform;
+    } else {
+        soc_model_ = "ARM64 Edge";
+    }
+
+#if defined(__aarch64__)
+    const unsigned long hwcap = getauxval(AT_HWCAP);
+    const unsigned long hwcap2 = getauxval(AT_HWCAP2);
+#ifdef HWCAP_ASIMDDP
+    has_dotprod_ = (hwcap & HWCAP_ASIMDDP) != 0;
+#endif
+#ifdef HWCAP_FPHP
+    has_fp16_ = (hwcap & HWCAP_FPHP) != 0;
+#endif
+#ifdef HWCAP2_I8MM
+    has_i8mm_ = (hwcap2 & HWCAP2_I8MM) != 0;
+#endif
+#endif
+
+    // Clasificar núcleos por frecuencia máxima para identificar Kryo Prime + Performance
+    unsigned int total_cores = std::thread::hardware_concurrency();
+    if (total_cores == 0) total_cores = 8;
+
+    std::vector<std::pair<int, long>> core_freqs;
+    long max_freq = 0;
+    long min_freq = -1;
+
+    for (unsigned int cpu = 0; cpu < total_cores && cpu < 16; ++cpu) {
+        std::string path = "/sys/devices/system/cpu/cpu" + std::to_string(cpu) + "/cpufreq/cpuinfo_max_freq";
+        std::ifstream f(path);
+        long freq = 0;
+        if (f.is_open() && (f >> freq) && freq > 0) {
+            core_freqs.push_back({static_cast<int>(cpu), freq});
+            if (freq > max_freq) max_freq = freq;
+            if (min_freq < 0 || freq < min_freq) min_freq = freq;
+        }
+    }
+
+    perf_core_ids_.clear();
+    if (!core_freqs.empty() && max_freq > min_freq) {
+        // Todo núcleo por encima del 110% de la frecuencia Little pertenece a Performance/Prime
+        const long threshold = min_freq + (max_freq - min_freq) / 4;
+        for (const auto& [id, freq] : core_freqs) {
+            if (freq >= threshold) {
+                perf_core_ids_.push_back(id);
+            }
+        }
+    }
+
+    LOGI("Topología CPU: dotprod=%d fp16=%d i8mm=%d | Núcleos Prime/Perf detectados=%zu",
+         has_dotprod_ ? 1 : 0, has_fp16_ ? 1 : 0, has_i8mm_ ? 1 : 0, perf_core_ids_.size());
+}
+
+size_t KofuEngine::get_process_rss_mb() {
+    std::ifstream statm("/proc/self/statm");
+    if (!statm.is_open()) return 0;
+    size_t size = 0, resident = 0;
+    statm >> size >> resident;
+    long page_size_kb = sysconf(_SC_PAGESIZE) / 1024;
+    return (resident * static_cast<size_t>(page_size_kb)) / 1024;
+}
+
+size_t KofuEngine::get_available_ram_mb() {
+    std::ifstream meminfo("/proc/meminfo");
+    if (!meminfo.is_open()) return 2048;
+    std::string key;
+    size_t value_kb = 0;
+    std::string unit;
+    while (meminfo >> key >> value_kb >> unit) {
+        if (key == "MemAvailable:") {
+            return value_kb / 1024;
+        }
+    }
+    return 1536;
+}
+
+void KofuEngine::free_threadpools_locked() {
+    if (lctx_) {
+        llama_detach_threadpool(lctx_);
+    }
+    if (threadpool_) {
+        ggml_threadpool_free(threadpool_);
+        threadpool_ = nullptr;
+    }
+    if (threadpool_batch_) {
+        ggml_threadpool_free(threadpool_batch_);
+        threadpool_batch_ = nullptr;
+    }
+}
+
+llama_context* KofuEngine::init_context_with_fallback(llama_model* model, HardwareTier tier) {
+    if (!model) return nullptr;
+
+    const std::string silicon_tier = KOFU_SILICON_TIER_STR;
+    const bool is_7nm = (silicon_tier == "7NM");
+    const bool is_frontier = (silicon_tier == "FRONTIER");
+
+    unsigned int hardware_threads = std::thread::hardware_concurrency();
+    int32_t max_threads_cap = is_frontier ? 6 : 4;
+    int32_t optimal_threads = 4;
+    if (!perf_core_ids_.empty()) {
+        optimal_threads = static_cast<int32_t>(std::min<size_t>(max_threads_cap, std::max<size_t>(2, perf_core_ids_.size())));
+    } else if (hardware_threads > 0) {
+        optimal_threads = static_cast<int32_t>(std::min<unsigned int>(max_threads_cap, std::max(2u, hardware_threads / 2)));
+    }
+
+    const size_t avail_mb = get_available_ram_mb();
+    std::vector<uint32_t> ctx_candidates;
+    if (is_7nm) {
+        ctx_candidates = (avail_mb >= 900) ? std::vector<uint32_t>{1024u, 512u} : std::vector<uint32_t>{512u};
+    } else if (is_frontier) {
+        ctx_candidates = (avail_mb >= 2200) ? std::vector<uint32_t>{4096u, 2048u, 1024u} : std::vector<uint32_t>{2048u, 1024u};
+    } else {
+        if (avail_mb >= 2600) {
+            ctx_candidates = {4096u, 2048u, 1024u};
+        } else if (avail_mb >= 1300) {
+            ctx_candidates = {2048u, 1024u};
+        } else {
+            ctx_candidates = {1024u};
+        }
+    }
+
+    const uint32_t batch_size = is_7nm ? 128u : (is_frontier ? 1024u : 512u);
+    const uint32_t ubatch_size = is_7nm ? 64u : (is_frontier ? 256u : 128u);
+
+    for (uint32_t ctx_size : ctx_candidates) {
+        llama_context_params cparams = llama_context_default_params();
+        cparams.n_ctx = ctx_size;
+        cparams.n_batch = batch_size;
+        cparams.n_ubatch = ubatch_size;
+        cparams.n_threads = optimal_threads;
+        cparams.n_threads_batch = optimal_threads;
+        cparams.swa_full = true; // Requerido por llama_kv_cache_iswa para Context Shifting en Gemma
+        cparams.flash_attn_type = LLAMA_FLASH_ATTN_TYPE_AUTO;
+        cparams.offload_kqv = (tier != HardwareTier::CPU);
+        cparams.op_offload = (tier != HardwareTier::CPU);
+
+        llama_context* ctx = llama_init_from_model(model, cparams);
+        if (ctx) {
+            // Adjuntar threadpool con afinidad a núcleos Kryo Prime/Performance
+            free_threadpools_locked();
+            if (!perf_core_ids_.empty()) {
+                struct ggml_threadpool_params tp_params = ggml_threadpool_params_default(optimal_threads);
+                std::memset(tp_params.cpumask, 0, sizeof(tp_params.cpumask));
+                for (int core_id : perf_core_ids_) {
+                    if (core_id >= 0 && core_id < GGML_MAX_N_THREADS) {
+                        tp_params.cpumask[core_id] = true;
+                    }
+                }
+                tp_params.strict_cpu = true;
+                tp_params.prio = GGML_SCHED_PRIO_HIGH;
+                threadpool_ = ggml_threadpool_new(&tp_params);
+                if (threadpool_) {
+                    llama_attach_threadpool(ctx, threadpool_, threadpool_);
+                }
+            }
+
+            {
+                std::lock_guard<std::mutex> s_lock(stats_mutex_);
+                last_stats_.active_n_ctx = static_cast<int32_t>(ctx_size);
+                last_stats_.available_ram_mb = avail_mb;
+                last_stats_.soc_model = soc_model_;
+            }
+
+            LOGI("Contexto creado (%s): n_ctx=%u, threads=%d, availRAM=%zu MB",
+                 tier_to_cstr(tier), ctx_size, optimal_threads, avail_mb);
+            return ctx;
+        }
+        LOGW("Fallo al reservar n_ctx=%u en %s (RAM disp=%zu MB), degradando contexto...",
+             ctx_size, tier_to_cstr(tier), avail_mb);
+    }
+    return nullptr;
+}
+
+bool KofuEngine::initialize_with_hardware_fallback(const std::string& source_path, const std::string& display_name) {
+    // Clasificar dispositivos ggml registrados en tiempo de ejecución
+    std::vector<ggml_backend_dev_t> npu_devs;
+    std::vector<ggml_backend_dev_t> gpu_devs;
+    ggml_backend_dev_t cpu_dev = nullptr;
+
+    const size_t dev_count = ggml_backend_dev_count();
+    for (size_t i = 0; i < dev_count; ++i) {
+        ggml_backend_dev_t dev = ggml_backend_dev_get(i);
+        if (!dev) continue;
+        ggml_backend_dev_props props{};
+        ggml_backend_dev_get_props(dev, &props);
+        const char* reg_name = ggml_backend_reg_name(ggml_backend_dev_backend_reg(dev));
+
+        const bool is_hexagon = (reg_name && std::strcmp(reg_name, "HTP") == 0) ||
+            contains_icase(props.name, "Hexagon") ||
+            contains_icase(props.description, "Hexagon");
+
+        if (is_hexagon || props.type == GGML_BACKEND_DEVICE_TYPE_ACCEL) {
+            npu_devs.push_back(dev);
+        } else if (props.type == GGML_BACKEND_DEVICE_TYPE_GPU || props.type == GGML_BACKEND_DEVICE_TYPE_IGPU) {
+            gpu_devs.push_back(dev);
+        } else if (props.type == GGML_BACKEND_DEVICE_TYPE_CPU && !cpu_dev) {
+            cpu_dev = dev;
+        }
+    }
+
+    std::vector<HardwareTier> tier_order;
+    switch (preferred_accelerator_) {
+        case PreferredAccelerator::FORCE_NPU:
+            tier_order = {HardwareTier::NPU, HardwareTier::CPU};
+            break;
+        case PreferredAccelerator::FORCE_GPU:
+            tier_order = {HardwareTier::GPU, HardwareTier::CPU};
+            break;
+        case PreferredAccelerator::FORCE_CPU:
+            tier_order = {HardwareTier::CPU};
+            break;
+        case PreferredAccelerator::AUTO_NPU_GPU_CPU:
+        default:
+            tier_order = {HardwareTier::NPU, HardwareTier::GPU, HardwareTier::CPU};
+            break;
+    }
+
+    for (HardwareTier tier : tier_order) {
+        std::vector<ggml_backend_dev_t> selected_devs;
+        if (tier == HardwareTier::NPU) {
+            if (npu_devs.empty()) {
+                LOGI("Cascada Fallback: Tier NPU no disponible en esta compilación/dispositivo; degradando a GPU.");
+                continue;
+            }
+            selected_devs.push_back(npu_devs.front());
+            if (cpu_dev) selected_devs.push_back(cpu_dev);
+            selected_devs.push_back(nullptr);
+        } else if (tier == HardwareTier::GPU) {
+            if (gpu_devs.empty()) {
+                LOGI("Cascada Fallback: Tier GPU (OpenCL/Vulkan Adreno) no disponible; degradando a CPU ARMv8 SIMD.");
+                continue;
+            }
+            selected_devs.push_back(gpu_devs.front());
+            if (cpu_dev) selected_devs.push_back(cpu_dev);
+            selected_devs.push_back(nullptr);
+        } else {
+            if (cpu_dev) {
+                selected_devs.push_back(cpu_dev);
+                selected_devs.push_back(nullptr);
+            }
+        }
+
+        llama_model_params mparams = llama_model_default_params();
+        mparams.devices = selected_devs.empty() ? nullptr : selected_devs.data();
+        mparams.n_gpu_layers = (tier == HardwareTier::CPU) ? 0 : -1;
+        mparams.load_mode = (tier == HardwareTier::CPU) ? LLAMA_LOAD_MODE_MMAP : LLAMA_LOAD_MODE_AUTO;
+
+        llama_model* candidate_model = llama_model_load_from_file(source_path.c_str(), mparams);
+        if (!candidate_model) {
+            LOGW("Fallo cargando modelo en tier %s, intentando siguiente nivel...", tier_to_cstr(tier));
+            continue;
+        }
+
+        llama_context* candidate_ctx = init_context_with_fallback(candidate_model, tier);
+        if (!candidate_ctx) {
+            LOGW("Fallo inicializando contexto en tier %s, liberando y degradando...", tier_to_cstr(tier));
+            llama_model_free(candidate_model);
+            continue;
+        }
+
+        lmodel_ = candidate_model;
+        lctx_ = candidate_ctx;
+        active_tier_ = tier;
+        is_model_loaded_.store(true);
+
+        std::string hw_desc = std::string("llama.cpp ") + tier_to_cstr(tier) + " (" + soc_model_ + ")";
+        {
+            std::lock_guard<std::mutex> s_lock(stats_mutex_);
+            loaded_path_ = source_path;
+            model_name_ = display_name;
+            last_stats_.hardware_tier = tier_to_cstr(tier);
+            last_stats_.backend_name = hw_desc;
+            last_stats_.soc_model = soc_model_;
+        }
+
+        LOGI("Modelo cargado en Tier %s (%s): %s",
+             tier_to_cstr(tier), soc_model_.c_str(), display_name.c_str());
+        return true;
+    }
+
+    return false;
+}
+
 void KofuEngine::unload_model_locked() {
     cancel_generation();
     is_model_loaded_.store(false);
+    active_tier_ = HardwareTier::NONE;
+    kv_cache_tokens_.clear();
 
+    free_threadpools_locked();
     if (lctx_) {
         llama_free(lctx_);
         lctx_ = nullptr;
@@ -80,70 +425,37 @@ void KofuEngine::unload_model_locked() {
         std::lock_guard<std::mutex> s_lock(stats_mutex_);
         loaded_path_.clear();
         model_name_.clear();
+        last_stats_.hardware_tier = "NONE";
     }
 }
 
 void KofuEngine::unload_model() {
+    cancel_generation();
     std::lock_guard<std::mutex> lock(engine_mutex_);
     unload_model_locked();
     LOGI("Modelo y contexto llama.cpp liberados correctamente");
 }
 
 bool KofuEngine::load_model(const std::string& filepath) {
+    cancel_generation();
     std::lock_guard<std::mutex> lock(engine_mutex_);
     unload_model_locked();
 
-    // 1. Validar integridad binaria de cabecera (Magic GGUF / LiteRT)
     if (!loader_->load(filepath)) {
         LOGE("Fallo en validación binaria para: %s", filepath.c_str());
         return false;
     }
 
-    // 2. Parámetros del modelo llama.cpp
-    llama_model_params mparams = llama_model_default_params();
-
-    lmodel_ = llama_model_load_from_file(filepath.c_str(), mparams);
-    if (!lmodel_) {
-        LOGE("llama_model_load_from_file falló para %s", filepath.c_str());
+    if (!initialize_with_hardware_fallback(filepath, loader_->get_metadata().filename)) {
+        LOGE("Fallo en todos los tiers de hardware (NPU->GPU->CPU) para %s", filepath.c_str());
         loader_->unload();
         return false;
     }
-
-    // 3. Crear contexto de inferencia para CPU ARM64
-    llama_context_params cparams = llama_context_default_params();
-    cparams.n_ctx = 2048;
-    cparams.n_batch = 512;
-
-    // Detectar número óptimo de hilos de CPU (en teléfonos, los núcleos de rendimiento suelen ser 4)
-    unsigned int hardware_threads = std::thread::hardware_concurrency();
-    int32_t optimal_threads = 4;
-    if (hardware_threads > 0) {
-        optimal_threads = static_cast<int32_t>(std::min(4u, std::max(2u, hardware_threads / 2)));
-        if (hardware_threads >= 6) optimal_threads = 4;
-    }
-    cparams.n_threads = optimal_threads;
-    cparams.n_threads_batch = optimal_threads;
-
-    lctx_ = llama_init_from_model(lmodel_, cparams);
-    if (!lctx_) {
-        LOGE("llama_init_from_model falló para %s", filepath.c_str());
-        llama_model_free(lmodel_);
-        lmodel_ = nullptr;
-        loader_->unload();
-        return false;
-    }
-
-    is_model_loaded_.store(true);
-    {
-        std::lock_guard<std::mutex> s_lock(stats_mutex_);
-        loaded_path_ = filepath;
-        model_name_ = loader_->get_metadata().filename;
-    }
-    LOGI("Modelo GGUF cargado exitosamente en motor llama.cpp nativo: %s", model_name_.c_str());
     return true;
 }
 
 bool KofuEngine::load_model_fd(int fd, size_t size, const std::string& name) {
+    cancel_generation();
     std::lock_guard<std::mutex> lock(engine_mutex_);
     unload_model_locked();
 
@@ -160,45 +472,12 @@ bool KofuEngine::load_model_fd(int fd, size_t size, const std::string& name) {
         return false;
     }
 
-    // En Android Linux, podemos acceder directamente al descriptor abierto vía /proc/self/fd/<fd>
     std::string proc_fd_path = "/proc/self/fd/" + std::to_string(fd);
-
-    llama_model_params mparams = llama_model_default_params();
-
-    lmodel_ = llama_model_load_from_file(proc_fd_path.c_str(), mparams);
-    if (!lmodel_) {
-        LOGE("llama_model_load_from_file falló para FD %s", proc_fd_path.c_str());
+    if (!initialize_with_hardware_fallback(proc_fd_path, name)) {
+        LOGE("Fallo cargando FD %d en cascada NPU->GPU->CPU", fd);
         unload_model_locked();
         return false;
     }
-
-    llama_context_params cparams = llama_context_default_params();
-    cparams.n_ctx = 2048;
-    cparams.n_batch = 512;
-
-    unsigned int hardware_threads = std::thread::hardware_concurrency();
-    int32_t optimal_threads = 4;
-    if (hardware_threads > 0) {
-        optimal_threads = static_cast<int32_t>(std::min(4u, std::max(2u, hardware_threads / 2)));
-        if (hardware_threads >= 6) optimal_threads = 4;
-    }
-    cparams.n_threads = optimal_threads;
-    cparams.n_threads_batch = optimal_threads;
-
-    lctx_ = llama_init_from_model(lmodel_, cparams);
-    if (!lctx_) {
-        LOGE("llama_init_from_model falló para descriptor fd=%d", fd);
-        unload_model_locked();
-        return false;
-    }
-
-    is_model_loaded_.store(true);
-    {
-        std::lock_guard<std::mutex> s_lock(stats_mutex_);
-        loaded_path_ = proc_fd_path;
-        model_name_ = name;
-    }
-    LOGI("Modelo cargado vía FD en llama.cpp nativo: %s", model_name_.c_str());
     return true;
 }
 
@@ -213,16 +492,48 @@ std::string KofuEngine::get_model_name() const {
 
 int KofuEngine::get_backend_type() const {
     if (!is_model_loaded_.load()) return 0;
-    return 2; // GGUF llama.cpp ARM64
+    return 2; // Motor local C++ (llama.cpp)
 }
 
-size_t KofuEngine::get_process_rss_mb() {
-    std::ifstream statm("/proc/self/statm");
-    if (!statm.is_open()) return 0;
-    size_t size = 0, resident = 0;
-    statm >> size >> resident;
-    long page_size_kb = sysconf(_SC_PAGESIZE) / 1024;
-    return (resident * page_size_kb) / 1024;
+std::string KofuEngine::get_active_hardware_tier() const {
+    return tier_to_cstr(active_tier_);
+}
+
+void KofuEngine::set_preferred_accelerator(int mode) {
+    std::lock_guard<std::mutex> lock(engine_mutex_);
+    switch (mode) {
+        case 1: preferred_accelerator_ = PreferredAccelerator::FORCE_NPU; break;
+        case 2: preferred_accelerator_ = PreferredAccelerator::FORCE_GPU; break;
+        case 3: preferred_accelerator_ = PreferredAccelerator::FORCE_CPU; break;
+        default: preferred_accelerator_ = PreferredAccelerator::AUTO_NPU_GPU_CPU; break;
+    }
+}
+
+void KofuEngine::trim_memory() {
+    if (is_generating_.load()) {
+        cancel_generation();
+        return;
+    }
+    std::unique_lock<std::mutex> lock(engine_mutex_, std::try_to_lock);
+    if (!lock.owns_lock() || !lctx_) return;
+
+    llama_memory_t mem = llama_get_memory(lctx_);
+    if (mem) {
+        llama_memory_clear(mem, true);
+    }
+    kv_cache_tokens_.clear();
+    LOGW("MemoryGuard: KV cache liberado tras evento trim_memory (RAM disp: %zu MB)", get_available_ram_mb());
+}
+
+void KofuEngine::set_generation_config(const GenerationConfig& config) {
+    std::lock_guard<std::mutex> lock(stats_mutex_);
+    gen_config_.temperature = std::clamp(config.temperature, 0.0f, 2.0f);
+    gen_config_.top_p = std::clamp(config.top_p, 0.05f, 1.0f);
+    gen_config_.repeat_penalty = std::clamp(config.repeat_penalty, 1.0f, 2.0f);
+    gen_config_.max_tokens = std::clamp(config.max_tokens, 8, 4096);
+    if (!config.system_prompt.empty()) {
+        gen_config_.system_prompt = config.system_prompt;
+    }
 }
 
 void KofuEngine::generate_stream(
@@ -251,24 +562,29 @@ void KofuEngine::generate_stream_history(
 
     auto start_time = std::chrono::steady_clock::now();
 
-    // 1. Determinar plantilla según el nombre del modelo
-    PromptStyle prompt_style = PromptStyle::GEMMA;
+    GenerationConfig cfg;
     std::string current_name;
     {
         std::lock_guard<std::mutex> s_lock(stats_mutex_);
+        cfg = gen_config_;
         current_name = model_name_;
     }
+
+    // 1. Determinar plantilla según el nombre del modelo
+    PromptStyle prompt_style = PromptStyle::GEMMA;
     std::string lower_name = current_name;
     std::transform(lower_name.begin(), lower_name.end(), lower_name.begin(), ::tolower);
     if (lower_name.find("gemma4") != std::string::npos || lower_name.find("gemma-4") != std::string::npos) {
         prompt_style = PromptStyle::GEMMA_4;
-    } else if (lower_name.find("chatml") != std::string::npos || lower_name.find("qwen") != std::string::npos) {
+    } else if (lower_name.find("chatml") != std::string::npos ||
+               lower_name.find("qwen") != std::string::npos ||
+               lower_name.find("smol") != std::string::npos) {
         prompt_style = PromptStyle::CHATML;
     }
 
     std::string formatted_prompt = PromptFormatter::format_multi_turn_prompt(
         history,
-        "Eres Kofu, un asistente de IA local útil, atento, privado y respetuoso. Responde de forma clara, precisa y concisa.",
+        cfg.system_prompt,
         prompt_style
     );
 
@@ -311,36 +627,95 @@ void KofuEngine::generate_stream_history(
     }
     tokens_list.resize(n_tokens);
 
-    // Salvaguarda de presupuesto de contexto (máximo 1536 tokens de entrada para dejar 512 de respuesta)
-    const int32_t max_context = 2048;
-    const int32_t max_prompt_budget = max_context - 384;
+    const int32_t max_context = static_cast<int32_t>(llama_n_ctx(lctx_));
+    const int32_t reserved_generation = std::min(384, max_context / 4);
+    const int32_t max_prompt_budget = std::max(128, max_context - reserved_generation);
     if (static_cast<int32_t>(tokens_list.size()) > max_prompt_budget) {
-        LOGW("Prompt excede presupuesto de contexto (%zu tokens), podando historial...", tokens_list.size());
-        size_t excess = tokens_list.size() - max_prompt_budget;
-        tokens_list.erase(tokens_list.begin(), tokens_list.begin() + excess);
+        LOGW("Prompt excede presupuesto de contexto (%zu > %d), aplicando poda segura...",
+             tokens_list.size(), max_prompt_budget);
+        const size_t keep_prefix = std::min<size_t>(64, tokens_list.size() / 4);
+        const size_t excess = tokens_list.size() - static_cast<size_t>(max_prompt_budget);
+        if (keep_prefix + excess < tokens_list.size()) {
+            tokens_list.erase(
+                tokens_list.begin() + static_cast<std::ptrdiff_t>(keep_prefix),
+                tokens_list.begin() + static_cast<std::ptrdiff_t>(keep_prefix + excess)
+            );
+        } else {
+            tokens_list.erase(tokens_list.begin(), tokens_list.begin() + static_cast<std::ptrdiff_t>(excess));
+        }
+        kv_cache_tokens_.clear();
     }
 
-    // 3. Limpiar memoria previa del contexto KV
-    llama_memory_clear(llama_get_memory(lctx_), true);
+    // 3. Reutilización incremental de KV Cache (Prefix Caching)
+    size_t n_past = 0;
+    while (n_past < kv_cache_tokens_.size() &&
+           n_past + 1 < tokens_list.size() &&
+           kv_cache_tokens_[n_past] == tokens_list[n_past]) {
+        ++n_past;
+    }
+
+    llama_memory_t mem = llama_get_memory(lctx_);
+    if (n_past == 0) {
+        llama_memory_clear(mem, true);
+        kv_cache_tokens_.clear();
+    } else if (n_past < kv_cache_tokens_.size()) {
+        if (!llama_memory_seq_rm(mem, 0, static_cast<llama_pos>(n_past), -1)) {
+            llama_memory_clear(mem, true);
+            kv_cache_tokens_.clear();
+            n_past = 0;
+        } else {
+            kv_cache_tokens_.resize(n_past);
+        }
+    }
+
+    LOGI("Inferencia | tokens_prompt=%zu | kv_reused=%zu | temp=%.2f | max_tok=%u | tier=%s",
+         tokens_list.size(), n_past, cfg.temperature,
+         static_cast<unsigned int>(cfg.max_tokens), tier_to_cstr(active_tier_));
 
     // 4. Inicializar cadena de muestreo (Sampler Chain)
     llama_sampler_chain_params sparams = llama_sampler_chain_default_params();
     llama_sampler* smpl = llama_sampler_chain_init(sparams);
-    llama_sampler_chain_add(smpl, llama_sampler_init_top_k(40));
-    llama_sampler_chain_add(smpl, llama_sampler_init_top_p(0.9f, 1));
-    llama_sampler_chain_add(smpl, llama_sampler_init_temp(0.7f));
-    llama_sampler_chain_add(smpl, llama_sampler_init_dist(static_cast<uint32_t>(std::time(nullptr))));
 
-    // 5. Procesar los tokens de entrada por lotes
-    llama_batch batch = llama_batch_init(512, 0, 1);
+    if (cfg.temperature <= 0.01f) {
+        if (cfg.repeat_penalty > 1.0f) {
+            llama_sampler_chain_add(
+                smpl,
+                llama_sampler_init_penalties(llama_vocab_n_tokens(vocab), 64, cfg.repeat_penalty, 0.0f, 0.0f)
+            );
+        }
+        llama_sampler_chain_add(smpl, llama_sampler_init_greedy());
+    } else {
+        llama_sampler_chain_add(smpl, llama_sampler_init_top_k(40));
+        llama_sampler_chain_add(smpl, llama_sampler_init_top_p(cfg.top_p, 1));
+        if (cfg.repeat_penalty > 1.0f) {
+            llama_sampler_chain_add(
+                smpl,
+                llama_sampler_init_penalties(llama_vocab_n_tokens(vocab), 64, cfg.repeat_penalty, 0.0f, 0.0f)
+            );
+        }
+        llama_sampler_chain_add(smpl, llama_sampler_init_temp(cfg.temperature));
+        llama_sampler_chain_add(smpl, llama_sampler_init_dist(static_cast<uint32_t>(std::time(nullptr))));
+    }
+
+    const size_t penalty_seed_start = (tokens_list.size() > 64) ? (tokens_list.size() - 64) : 0;
+    for (size_t i = penalty_seed_start; i < tokens_list.size(); ++i) {
+        llama_sampler_accept(smpl, tokens_list[i]);
+    }
+
+    // 5. Prefill en micro-lotes de 128
+    constexpr int32_t kPrefillBatchSize = 128;
+    llama_batch batch = llama_batch_init(kPrefillBatchSize, 0, 1);
     bool prompt_interrupted = false;
-    for (size_t i = 0; i < tokens_list.size(); i += 512) {
+
+    for (size_t i = n_past; i < tokens_list.size(); i += kPrefillBatchSize) {
         if (is_cancelled_.load()) {
             prompt_interrupted = true;
             break;
         }
 
-        int32_t n_eval = static_cast<int32_t>(std::min(static_cast<size_t>(512), tokens_list.size() - i));
+        const int32_t n_eval = static_cast<int32_t>(
+            std::min(static_cast<size_t>(kPrefillBatchSize), tokens_list.size() - i)
+        );
         for (int32_t j = 0; j < n_eval; ++j) {
             batch.token[j] = tokens_list[i + j];
             batch.pos[j] = static_cast<llama_pos>(i + j);
@@ -352,12 +727,20 @@ void KofuEngine::generate_stream_history(
 
         if (llama_decode(lctx_, batch) != 0) {
             LOGE("llama_decode falló al procesar tokens del prompt");
+            llama_memory_clear(mem, true);
+            kv_cache_tokens_.clear();
             token_callback("\n[Error de decodificación en prompt]");
             llama_batch_free(batch);
             llama_sampler_free(smpl);
             is_generating_.store(false);
             return;
         }
+
+        kv_cache_tokens_.insert(
+            kv_cache_tokens_.end(),
+            tokens_list.begin() + static_cast<std::ptrdiff_t>(i),
+            tokens_list.begin() + static_cast<std::ptrdiff_t>(i + n_eval)
+        );
     }
 
     if (prompt_interrupted || is_cancelled_.load()) {
@@ -368,10 +751,13 @@ void KofuEngine::generate_stream_history(
         return;
     }
 
-    // 6. Bucle de generación autoregresiva con emisor seguro UTF-8
+    // 6. Bucle de generación autoregresiva con Context Shifting ISWA-safe y LMK Guard
     llama_pos n_cur = static_cast<llama_pos>(tokens_list.size());
-    const int32_t max_generated_tokens = 2048;
+    const uint32_t max_generated_tokens = static_cast<uint32_t>(
+        std::clamp(cfg.max_tokens, 8, max_context)
+    );
     uint32_t token_count = 0;
+    bool low_ram_triggered = false;
 
     std::string utf8_accumulator;
     auto emit_utf8_safe = [&](const std::string& piece, bool flush = false) {
@@ -393,22 +779,58 @@ void KofuEngine::generate_stream_history(
 
     char piece_buf[256];
 
-    while (token_count < max_generated_tokens && n_cur < max_context) {
+    while (token_count < max_generated_tokens) {
         if (is_cancelled_.load()) {
+            emit_utf8_safe("", true);
             token_callback("\n[Generación cancelada]");
             break;
         }
 
-        // Muestrear siguiente token a partir de los logits del último token
+        // LMK Circuit Breaker cada 16 tokens para evitar desborde de RAM (180 MB en 7nm, 120 MB en 5nm/Frontier)
+        if (token_count > 0 && (token_count % 16 == 0)) {
+            const size_t min_safe_ram = (std::string(KOFU_SILICON_TIER_STR) == "7NM") ? 180 : 120;
+            const size_t avail_mb = get_available_ram_mb();
+            if (avail_mb < min_safe_ram) {
+                LOGW("LMK Guard activado (RAM libre=%zu MB < %zu MB), deteniendo generación segura", avail_mb, min_safe_ram);
+                low_ram_triggered = true;
+                emit_utf8_safe("", true);
+                break;
+            }
+        }
+
+        // Context Shifting automático si la ventana KV alcanza el borde
+        if (n_cur >= max_context - 4) {
+            if (mem && llama_memory_can_shift(mem)) {
+                const llama_pos n_keep = std::min<llama_pos>(64, n_cur / 4);
+                const llama_pos n_discard = std::max<llama_pos>(64, (n_cur - n_keep) / 2);
+                if (n_discard > 0 && n_keep + n_discard < n_cur) {
+                    llama_memory_seq_rm(mem, 0, n_keep, n_keep + n_discard);
+                    llama_memory_seq_add(mem, 0, n_keep + n_discard, n_cur, -n_discard);
+                    if (static_cast<size_t>(n_keep + n_discard) <= kv_cache_tokens_.size()) {
+                        kv_cache_tokens_.erase(
+                            kv_cache_tokens_.begin() + n_keep,
+                            kv_cache_tokens_.begin() + n_keep + n_discard
+                        );
+                    }
+                    n_cur -= n_discard;
+                    LOGI("Context Shifting ejecutado: descartados %d tokens, n_cur=%d/%d",
+                         static_cast<int>(n_discard), static_cast<int>(n_cur), max_context);
+                } else {
+                    break;
+                }
+            } else {
+                LOGW("Límite de contexto alcanzado (%d) y arquitectura sin shifting; finalizando turno.", max_context);
+                break;
+            }
+        }
+
         llama_token new_token_id = llama_sampler_sample(smpl, lctx_, -1);
         llama_sampler_accept(smpl, new_token_id);
 
-        // Comprobar token de fin de generación (EOG/EOS)
         if (llama_vocab_is_eog(vocab, new_token_id)) {
             break;
         }
 
-        // Convertir token a texto (piece) con manejo seguro contra desbordamiento de búfer
         int32_t n_piece = llama_token_to_piece(vocab, new_token_id, piece_buf, sizeof(piece_buf), 0, false);
         if (n_piece < 0) {
             std::vector<char> dynamic_buf(-n_piece);
@@ -424,7 +846,6 @@ void KofuEngine::generate_stream_history(
             token_count++;
         }
 
-        // Preparar batch para decodificar el nuevo token
         batch.n_tokens = 1;
         batch.token[0] = new_token_id;
         batch.pos[0] = n_cur;
@@ -436,30 +857,44 @@ void KofuEngine::generate_stream_history(
 
         if (llama_decode(lctx_, batch) != 0) {
             LOGE("llama_decode falló durante la generación");
+            llama_memory_clear(mem, true);
+            kv_cache_tokens_.clear();
             break;
         }
+
+        kv_cache_tokens_.push_back(new_token_id);
     }
 
-    // Vaciar bytes restantes acumulados
     emit_utf8_safe("", true);
 
-    // 7. Liberar recursos de generación
     llama_batch_free(batch);
     llama_sampler_free(smpl);
 
+    if (low_ram_triggered && mem) {
+        llama_memory_clear(mem, true);
+        kv_cache_tokens_.clear();
+    }
+
     auto end_time = std::chrono::steady_clock::now();
     double elapsed = std::chrono::duration<double>(end_time - start_time).count();
+    const size_t rss_mb = get_process_rss_mb();
+    const size_t avail_mb = get_available_ram_mb();
 
     {
         std::lock_guard<std::mutex> s_lock(stats_mutex_);
         last_stats_.tokens_generated = token_count;
         last_stats_.elapsed_seconds = elapsed;
         last_stats_.tokens_per_second = (elapsed > 0.0) ? (token_count / elapsed) : 0.0;
-        last_stats_.memory_rss_mb = get_process_rss_mb();
-        last_stats_.backend_name = "llama.cpp ARM64";
+        last_stats_.memory_rss_mb = rss_mb;
+        last_stats_.available_ram_mb = avail_mb;
+        last_stats_.hardware_tier = tier_to_cstr(active_tier_);
+        last_stats_.soc_model = soc_model_;
+        last_stats_.backend_name = std::string("llama.cpp ") + tier_to_cstr(active_tier_);
     }
 
     is_generating_.store(false);
+    LOGI("Inferencia completada | tok=%u | elapsed=%.2fs | tps=%.2f | rss=%zu MB | availRAM=%zu MB",
+         token_count, elapsed, (elapsed > 0.0) ? (token_count / elapsed) : 0.0, rss_mb, avail_mb);
 }
 
 void KofuEngine::cancel_generation() {
@@ -474,6 +909,12 @@ std::string KofuEngine::get_stats_json() const {
        << "\"elapsed_seconds\":" << last_stats_.elapsed_seconds << ","
        << "\"tokens_per_sec\":" << last_stats_.tokens_per_second << ","
        << "\"memory_rss_mb\":" << last_stats_.memory_rss_mb << ","
+       << "\"available_ram_mb\":" << (last_stats_.available_ram_mb > 0 ? last_stats_.available_ram_mb : get_available_ram_mb()) << ","
+       << "\"n_ctx\":" << last_stats_.active_n_ctx << ","
+       << "\"hardware_tier\":\"" << last_stats_.hardware_tier << "\","
+       << "\"silicon_tier\":\"" << KOFU_SILICON_TIER_STR << "\","
+       << "\"isa_arch\":\"" << KOFU_ARM_ARCH_STR << "\","
+       << "\"soc_model\":\"" << last_stats_.soc_model << "\","
        << "\"backend\":\"" << last_stats_.backend_name << "\""
        << "}";
     return ss.str();

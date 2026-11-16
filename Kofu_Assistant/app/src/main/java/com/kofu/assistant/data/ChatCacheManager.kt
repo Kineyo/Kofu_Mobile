@@ -3,6 +3,12 @@ package com.kofu.assistant.data
 import android.content.Context
 import android.util.Log
 import androidx.core.util.AtomicFile
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
@@ -13,7 +19,8 @@ data class ChatMessageData(
     val id: String = UUID.randomUUID().toString(),
     val sender: String, // "USER" o "KOFU"
     val text: String,
-    val timestamp: Long = System.currentTimeMillis()
+    val timestamp: Long = System.currentTimeMillis(),
+    val isSystemNotice: Boolean = false
 )
 
 data class ChatSession(
@@ -33,6 +40,11 @@ data class ChatSession(
 object ChatCacheManager {
     private const val TAG = "ChatCacheManager"
     private const val CACHE_FILE_NAME = "kofu_chats_cache.json"
+    val MAX_IN_MEMORY_MESSAGES_PER_SESSION: Int
+        get() = KofuEditionProfile.current.maxInMemoryMessages
+
+    private val cacheScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
+    private val writeMutex = Mutex()
 
     fun getCacheFile(context: Context): File {
         return File(context.filesDir, CACHE_FILE_NAME)
@@ -48,7 +60,8 @@ object ChatCacheManager {
                 messages = mutableListOf(
                     ChatMessageData(
                         sender = "KOFU",
-                        text = "Inferencia local activa con llama.cpp ARM64. Modelo listo para consultas."
+                        text = "Inferencia local activa con llama.cpp ARM64. Modelo listo para consultas.",
+                        isSystemNotice = true
                     )
                 )
             )
@@ -82,7 +95,8 @@ object ChatCacheManager {
                             id = mObj.optString("id", UUID.randomUUID().toString()),
                             sender = mObj.optString("sender", "USER"),
                             text = mObj.optString("text", ""),
-                            timestamp = mObj.optLong("timestamp", System.currentTimeMillis())
+                            timestamp = mObj.optLong("timestamp", System.currentTimeMillis()),
+                            isSystemNotice = mObj.optBoolean("isSystemNotice", false)
                         )
                     )
                 }
@@ -106,7 +120,8 @@ object ChatCacheManager {
                     messages = mutableListOf(
                         ChatMessageData(
                             sender = "KOFU",
-                            text = "Inferencia local activa con llama.cpp ARM64. Modelo listo para consultas."
+                            text = "Inferencia local activa con llama.cpp ARM64. Modelo listo para consultas.",
+                            isSystemNotice = true
                         )
                     )
                 )
@@ -119,6 +134,50 @@ object ChatCacheManager {
             Log.e(TAG, "Error cargando caché de chats", e)
             mutableListOf()
         }
+    }
+
+    /**
+     * Compacta mensajes antiguos cuando una sesión supera MAX_IN_MEMORY_MESSAGES_PER_SESSION
+     * conservando el aviso inicial y los turnos más recientes para evitar crecimiento ilimitado de RAM.
+     */
+    fun compactSessionsInPlace(sessions: List<ChatSession>) {
+        for (session in sessions) {
+            if (session.messages.size > MAX_IN_MEMORY_MESSAGES_PER_SESSION) {
+                val first = session.messages.firstOrNull()
+                val tailCount = MAX_IN_MEMORY_MESSAGES_PER_SESSION - if (first?.isSystemNotice == true) 1 else 0
+                val recent = session.messages.takeLast(tailCount)
+                session.messages.clear()
+                if (first?.isSystemNotice == true) {
+                    session.messages.add(first)
+                }
+                session.messages.addAll(recent)
+            }
+        }
+    }
+
+    /**
+     * Toma una instantánea inmutable en el hilo llamador y persiste el caché en Dispatchers.IO
+     * sin bloquear el hilo principal de la UI.
+     */
+    fun saveSessionsAsync(context: Context, sessions: List<ChatSession>) {
+        val appContext = context.applicationContext
+        compactSessionsInPlace(sessions)
+        val snapshot = sessions.map { session ->
+            session.copy(messages = session.messages.toMutableList())
+        }
+        cacheScope.launch {
+            writeMutex.withLock {
+                saveSessions(appContext, snapshot)
+            }
+        }
+    }
+
+    /**
+     * Persiste inmediatamente las sesiones de forma síncrona (útil en onStop o pruebas por consola).
+     */
+    fun flushSync(context: Context, sessions: List<ChatSession>) {
+        compactSessionsInPlace(sessions)
+        saveSessions(context.applicationContext, sessions)
     }
 
     @Synchronized
@@ -146,6 +205,9 @@ object ChatCacheManager {
                     mObj.put("sender", m.sender)
                     mObj.put("text", m.text)
                     mObj.put("timestamp", m.timestamp)
+                    if (m.isSystemNotice) {
+                        mObj.put("isSystemNotice", true)
+                    }
                     msgArray.put(mObj)
                 }
                 sObj.put("messages", msgArray)

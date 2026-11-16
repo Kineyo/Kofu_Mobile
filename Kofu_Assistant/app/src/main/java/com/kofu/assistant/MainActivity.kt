@@ -1,19 +1,31 @@
 package com.kofu.assistant
 
+import android.Manifest
+import android.content.ComponentCallbacks2
+import android.content.pm.PackageManager
+import android.os.Build
 import android.os.Bundle
+import android.view.WindowManager
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.core.content.ContextCompat
 import androidx.lifecycle.lifecycleScope
+import com.kofu.assistant.data.rag.KofuRagDatabase
+import com.kofu.assistant.repository.BackendMode
+import com.kofu.assistant.repository.KofuNativeEngine
 import com.kofu.assistant.repository.LlamaRepository
 import com.kofu.assistant.ui.ChatScreen
 import com.kofu.assistant.ui.theme.KofuFontScale
 import com.kofu.assistant.ui.theme.KofuTheme
 import com.kofu.assistant.ui.theme.KofuThemeMode
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 
 class MainActivity : ComponentActivity() {
 
@@ -23,9 +35,24 @@ class MainActivity : ComponentActivity() {
         private const val KEY_FONT_SCALE = "font_scale"
     }
 
+    private val notificationPermissionLauncher = registerForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { /* La notificación se mostrará si el permiso fue concedido */ }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
+        window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            val granted = ContextCompat.checkSelfPermission(
+                this,
+                Manifest.permission.POST_NOTIFICATIONS
+            ) == PackageManager.PERMISSION_GRANTED
+            if (!granted) {
+                notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+            }
+        }
 
         val prefs = getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
         val savedThemeName = prefs.getString(KEY_THEME_MODE, KofuThemeMode.DARK.name)
@@ -41,10 +68,17 @@ class MainActivity : ComponentActivity() {
         val repository = LlamaRepository
         repository.loadPreferences(this)
 
-        // Detección automática del servidor Ollama (laptop por ADB reverse o red local)
-        repository.probeOllama(lifecycleScope)
+        // Pre-indexar base RAG offline SQLite FTS4 + BM25 en segundo plano
+        lifecycleScope.launch(Dispatchers.IO) {
+            KofuRagDatabase.getInstance(applicationContext)
+        }
 
-        // Descarga automática por defecto del modelo desde Hugging Face
+        // Operación 100% offline por defecto; solo sondear Ollama si el modo elegido lo requiere
+        if (repository.backendMode != BackendMode.LOCAL_CPP) {
+            repository.probeOllama(lifecycleScope)
+        }
+
+        // Cargar modelo local disponible o descargar el modelo oficial si no existe
         repository.startAutoDownloadIfNeeded(this, lifecycleScope)
 
         setContent {
@@ -65,6 +99,17 @@ class MainActivity : ComponentActivity() {
                         prefs.edit().putString(KEY_FONT_SCALE, newScale.name).apply()
                     }
                 )
+            }
+        }
+    }
+
+    override fun onTrimMemory(level: Int) {
+        super.onTrimMemory(level)
+        if (level >= ComponentCallbacks2.TRIM_MEMORY_RUNNING_CRITICAL ||
+            level >= ComponentCallbacks2.TRIM_MEMORY_BACKGROUND
+        ) {
+            if (KofuNativeEngine.isNativeReady()) {
+                KofuNativeEngine.nativeTrimMemory()
             }
         }
     }

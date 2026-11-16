@@ -173,6 +173,18 @@ El modelo predeterminado de Kofu es una versión especializada basada en **Googl
 
 ---
 
+## 📱 Ediciones Especializadas por Nodo Tecnológico (GitHub Actions CI/CD)
+
+Para maximizar la compatibilidad desde Android 5.0 hasta teléfonos insignia de frontera (Android 16+) y aprovechar cada microarquitectura ARMv8 sin `SIGILL` ni desbordes de RAM, **Kofu Mobile** compila **3 ediciones especializadas** en GitHub Actions:
+
+| Edición (`productFlavor`) | Rango Android | Nodo e ISA ARMv8 | Tarea de IA Especializada | Normalización de Recursos |
+| :--- | :--- | :--- | :--- | :--- |
+| **`node7nm`** *(Legacy)* | Android 5.0 – 7.x (API 21+) | `7nm–14nm` • `armv8-a` universal (sin DotProd/i8mm) | **Síntesis Ultraligera y Consulta Factual Rápida** | `Kofu 1.0 Lite`, `n_ctx <= 1024`, `n_batch=128`, máx `384 tok`, temp `0.25`, `1` chunk RAG (`<=280 chars`), LMK guard `180 MB` |
+| **`node5nm`** *(Mainstream)* | Android 8.0 – 15.0 (API 26–35) | `5nm / 4nm` • `armv8.2-a+dotprod+fp16` (Kryo Prime+Perf) | **Ingeniería de Software, Código y Asistencia Técnica** | `Kofu 2.0 Edge`, `n_ctx` adaptativo (`1024–4096`), `n_batch=512`, máx `1024 tok`, `2` chunks RAG (`<=480 chars`), LMK guard `120 MB` |
+| **`frontierSub5nm`** *(Frontera)* | Android 16+ Flagship (API 34–36+) | `<5nm (3nm/2nm)` • `armv8.6-a+dotprod+fp16+i8mm` | **Razonamiento Profundo, Ciencia Avanzada y Contexto Largo** | `Kofu 4.0 Pro` (fallback automático a `2.0`), `n_ctx` hasta `4096`, `n_batch=1024`, hasta `6` hilos, máx `2048 tok`, `3` chunks RAG (`<=720 chars`) |
+
+---
+
 ## 📱 Requisitos del Dispositivo
 
 | Requisito | Mínimo | Recomendado |

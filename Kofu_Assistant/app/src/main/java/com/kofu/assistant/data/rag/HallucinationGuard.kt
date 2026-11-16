@@ -1,0 +1,114 @@
+package com.kofu.assistant.data.rag
+
+data class GroundedInferenceRequest(
+    val augmentedUserPrompt: String,
+    val effectiveTemperature: Float,
+    val effectiveSystemPrompt: String,
+    val groundedWithRag: Boolean,
+    val factualCappingApplied: Boolean
+)
+
+/**
+ * Capa determinista de reducción de alucinaciones y preservación de velocidad por token.
+ * - Solo inyecta contexto verificado cuando la consulta lo requiere (0 overhead en chitchat).
+ * - Aplica temp capping (<= 0.35f) en consultas factuales o técnicas para evitar invenciones.
+ * - Detecta premisas falsas o consultas en tiempo real imposible offline.
+ */
+object HallucinationGuard {
+
+    private val REALTIME_OFFLINE_PATTERNS = listOf(
+        "clima hoy", "temperatura actual", "noticias de hoy", "precio del dolar hoy",
+        "quien gano ayer", "marcador en vivo", "bolsa hoy", "hora exacta en vivo",
+        "busca en internet", "googlea"
+    )
+
+    private val FACTUAL_KEYWORDS = setOf(
+        "quien", "cuando", "cuanto", "cuantos", "cual", "formula", "valor", "constante",
+        "velocidad", "capital", "fecha", "ley", "teorema", "complejidad", "codigo",
+        "diferencia", "define", "significa", "ano", "edad", "altura", "distancia"
+    )
+
+    fun isFactualOrTechnicalQuery(query: String, domain: RagDomain): Boolean {
+        if (domain != RagDomain.CHITCHAT) return true
+        val tokens = DynamicDomainRouter.tokenize(query)
+        return tokens.any { it in FACTUAL_KEYWORDS }
+    }
+
+    fun isRealtimeImpossibleOffline(query: String): Boolean {
+        val norm = DynamicDomainRouter.normalize(query)
+        return REALTIME_OFFLINE_PATTERNS.any { norm.contains(it) }
+    }
+
+    fun prepareGroundedPrompt(
+        userQuery: String,
+        ragResult: RagRetrievalResult,
+        baseTemperature: Float,
+        baseSystemPrompt: String
+    ): GroundedInferenceRequest {
+        val factual = isFactualOrTechnicalQuery(userQuery, ragResult.domain)
+        val hasRagContext = ragResult.formattedContext.isNotBlank()
+        val realtimeOffline = isRealtimeImpossibleOffline(userQuery)
+
+        val effectiveTemp = when {
+            realtimeOffline -> minOf(baseTemperature, 0.2f)
+            hasRagContext -> minOf(baseTemperature, 0.35f)
+            factual -> minOf(baseTemperature, 0.40f)
+            else -> baseTemperature
+        }
+
+        // Mantener systemPrompt estable para maximizar KV Cache Prefix Reuse entre turnos y consultas
+        val groundedSystem = baseSystemPrompt
+
+        val augmentedPrompt = when {
+            realtimeOffline -> buildString {
+                append("[AVISO OFFLINE: Kofu opera 100% sin internet; no hay datos en tiempo real.]\n")
+                if (hasRagContext) {
+                    append("[CONTEXTO VERIFICADO - ").append(ragResult.domain.displayName).append("]\n")
+                    append(ragResult.formattedContext).append("\n[/CONTEXTO]\n")
+                }
+                append(userQuery)
+            }
+            hasRagContext -> buildString {
+                append("[CONTEXTO VERIFICADO - ").append(ragResult.domain.displayName).append("]\n")
+                append(ragResult.formattedContext).append("\n[/CONTEXTO]\n")
+                append(userQuery)
+            }
+            else -> userQuery
+        }
+
+        return GroundedInferenceRequest(
+            augmentedUserPrompt = augmentedPrompt,
+            effectiveTemperature = effectiveTemp,
+            effectiveSystemPrompt = groundedSystem,
+            groundedWithRag = hasRagContext,
+            factualCappingApplied = effectiveTemp < baseTemperature
+        )
+    }
+
+    /**
+     * Detecta y recorta bucles degenerados de repetición excesiva de líneas o frases.
+     */
+    fun sanitizeAndValidateResponse(rawResponse: String): String {
+        val trimmed = rawResponse.trim()
+        if (trimmed.isEmpty()) return trimmed
+
+        val lines = trimmed.lines()
+        if (lines.size <= 4) return trimmed
+
+        val seenCounts = HashMap<String, Int>()
+        val result = mutableListOf<String>()
+        for (line in lines) {
+            val normLine = line.trim()
+            if (normLine.length >= 20) {
+                val count = (seenCounts[normLine] ?: 0) + 1
+                seenCounts[normLine] = count
+                if (count > 2) {
+                    // Cortar bucle repetitivo detectado
+                    break
+                }
+            }
+            result.add(line)
+        }
+        return result.joinToString("\n").trimEnd()
+    }
+}

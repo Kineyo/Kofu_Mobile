@@ -194,6 +194,36 @@ fun DebugHud(
                         overflow = TextOverflow.Ellipsis
                     )
                 }
+
+                Spacer(modifier = Modifier.height(3.dp))
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = "HW:${metrics.hardwareTier}",
+                        color = colors.successAccent,
+                        fontSize = 10.sp,
+                        fontWeight = FontWeight.Bold,
+                        fontFamily = FontFamily.Monospace
+                    )
+                    Text(
+                        text = "RAG:${metrics.activeRagDomain} (${metrics.ragLookupMs}ms)",
+                        color = colors.onSurfaceSecondary,
+                        fontSize = 10.sp,
+                        fontFamily = FontFamily.Monospace,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                    Text(
+                        text = if (metrics.availableRamMb > 0) "RAM:${metrics.availableRamMb}MB" else "RSS:${metrics.memoryRssMb}MB",
+                        color = colors.onSurfaceSecondary,
+                        fontSize = 10.sp,
+                        fontFamily = FontFamily.Monospace
+                    )
+                }
             }
         }
     }

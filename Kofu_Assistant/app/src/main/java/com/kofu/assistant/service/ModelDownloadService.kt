@@ -8,31 +8,34 @@ import android.app.Service
 import android.content.Context
 import android.content.Intent
 import android.content.pm.ServiceInfo
-import android.net.Uri
 import android.os.Build
 import android.os.IBinder
 import android.util.Log
 import androidx.core.app.NotificationCompat
+import androidx.core.app.ServiceCompat
 import com.kofu.assistant.MainActivity
 import com.kofu.assistant.repository.LlamaRepository
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import java.io.File
+import java.io.FileInputStream
 import java.io.FileOutputStream
 import java.util.concurrent.TimeUnit
 
 /**
  * Foreground Service para descargar modelos de Inteligencia Artificial en segundo plano.
- * Proporciona una notificación persistente con barra de progreso, soporte para reanudación
- * (HTTP Range requests) y permite que la descarga continúe incluso si el usuario sale de la aplicación.
+ * Utiliza descargas atómicas con archivos temporales .part, validación binaria de cabecera
+ * (Magic Numbers) y soporte de reanudación mediante HTTP Range requests.
  */
 class ModelDownloadService : Service() {
 
@@ -49,6 +52,8 @@ class ModelDownloadService : Service() {
         const val EXTRA_URL = "extra_download_url"
         const val EXTRA_FILE_NAME = "extra_file_name"
         const val EXTRA_MODEL_NAME = "extra_model_name"
+
+        private val SUPPORTED_EXTENSIONS = listOf(".gguf", ".litertlm", ".tflite", ".task", ".bin")
 
         fun startDownload(context: Context, url: String, fileName: String, modelName: String) {
             val intent = Intent(context, ModelDownloadService::class.java).apply {
@@ -108,12 +113,8 @@ class ModelDownloadService : Service() {
                     startDownloadProcess(url, fileName, modelName)
                 }
             }
-            ACTION_PAUSE_DOWNLOAD -> {
-                pauseDownloadProcess()
-            }
-            ACTION_CANCEL_DOWNLOAD -> {
-                cancelDownloadProcess()
-            }
+            ACTION_PAUSE_DOWNLOAD -> pauseDownloadProcess()
+            ACTION_CANCEL_DOWNLOAD -> cancelDownloadProcess()
         }
         return START_NOT_STICKY
     }
@@ -132,6 +133,14 @@ class ModelDownloadService : Service() {
         }
     }
 
+    private fun pendingFlags(): Int {
+        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        } else {
+            PendingIntent.FLAG_UPDATE_CURRENT
+        }
+    }
+
     private fun buildNotification(modelName: String, progress: Int, isIndeterminate: Boolean = false): Notification {
         val openAppIntent = Intent(this, MainActivity::class.java).apply {
             flags = Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP
@@ -140,7 +149,7 @@ class ModelDownloadService : Service() {
             this,
             0,
             openAppIntent,
-            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+            pendingFlags()
         )
 
         val pauseIntent = Intent(this, ModelDownloadService::class.java).apply {
@@ -150,7 +159,7 @@ class ModelDownloadService : Service() {
             this,
             2,
             pauseIntent,
-            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+            pendingFlags()
         )
 
         val cancelIntent = Intent(this, ModelDownloadService::class.java).apply {
@@ -160,7 +169,7 @@ class ModelDownloadService : Service() {
             this,
             1,
             cancelIntent,
-            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+            pendingFlags()
         )
 
         return NotificationCompat.Builder(this, CHANNEL_ID)
@@ -193,8 +202,53 @@ class ModelDownloadService : Service() {
         val notification = buildNotification(modelName, progressPercent, false)
         notificationManager.notify(NOTIFICATION_ID, notification)
 
-        LlamaRepository.downloadProgress = progressPercent / 100f
+        LlamaRepository.downloadProgress = (progressPercent / 100f).coerceIn(0f, 1f)
         LlamaRepository.downloadStatusText = "Descargando $modelName ($progressPercent%)"
+    }
+
+    private fun hasValidModelHeader(file: File, fileName: String): Boolean {
+        if (!file.exists() || file.length() < 16L) return false
+        val header = ByteArray(8)
+        val readCount = FileInputStream(file).use { it.read(header) }
+        if (readCount < 8) return false
+
+        val lower = fileName.lowercase()
+        return when {
+            lower.endsWith(".gguf") -> {
+                header[0] == 'G'.code.toByte() &&
+                    header[1] == 'G'.code.toByte() &&
+                    header[2] == 'U'.code.toByte() &&
+                    header[3] == 'F'.code.toByte()
+            }
+            lower.endsWith(".litertlm") || lower.endsWith(".tflite") -> {
+                header[4] == 'T'.code.toByte() &&
+                    header[5] == 'F'.code.toByte() &&
+                    header[6] == 'L'.code.toByte() &&
+                    header[7] == '3'.code.toByte()
+            }
+            else -> true
+        }
+    }
+
+    private fun promotePartFile(partFile: File, targetFile: File): Boolean {
+        if (targetFile.exists() && !targetFile.delete()) {
+            Log.w(TAG, "No se pudo eliminar archivo previo ${targetFile.name}")
+        }
+        if (partFile.renameTo(targetFile)) {
+            return true
+        }
+        return try {
+            partFile.inputStream().use { inp ->
+                FileOutputStream(targetFile).use { out ->
+                    inp.copyTo(out)
+                }
+            }
+            partFile.delete()
+            true
+        } catch (e: Exception) {
+            Log.e(TAG, "Fallo promoviendo archivo temporal ${partFile.name}", e)
+            false
+        }
     }
 
     private fun startDownloadProcess(url: String, fileName: String, modelName: String) {
@@ -206,16 +260,10 @@ class ModelDownloadService : Service() {
         }
 
         val safeFileName = File(fileName).name.replace(Regex("[^a-zA-Z0-9._-]"), "_")
-        if (!safeFileName.endsWith(".gguf", ignoreCase = true) && !safeFileName.endsWith(".litertlm", ignoreCase = true)) {
+        if (SUPPORTED_EXTENSIONS.none { safeFileName.endsWith(it, ignoreCase = true) }) {
             notifyError("Tipo de archivo de modelo no permitido")
             return
         }
-
-        LlamaRepository.isDownloadingModel = true
-        LlamaRepository.isDownloadPaused = false
-        LlamaRepository.currentDownloadingUrl = url
-        LlamaRepository.currentDownloadingFileName = safeFileName
-        LlamaRepository.currentDownloadingModelName = modelName
 
         val externalDir = getExternalFilesDir(null)
         if (externalDir == null) {
@@ -224,13 +272,30 @@ class ModelDownloadService : Service() {
         }
 
         val targetFile = File(externalDir, safeFileName)
-        if (!targetFile.canonicalPath.startsWith(externalDir.canonicalPath)) {
+        val partFile = File(externalDir, "$safeFileName.part")
+        if (!targetFile.canonicalPath.startsWith(externalDir.canonicalPath) ||
+            !partFile.canonicalPath.startsWith(externalDir.canonicalPath)
+        ) {
             notifyError("Ruta de archivo no permitida (Path Traversal)")
             return
         }
 
-        val existingLen = if (targetFile.exists()) targetFile.length() else 0L
-        val expectedMin = LlamaRepository.getExpectedMinSize(LlamaRepository.selectedModel)
+        val modelOpt = LlamaRepository.AVAILABLE_MODELS.find { it.fileName == safeFileName }
+            ?: LlamaRepository.selectedModel
+        val expectedMin = LlamaRepository.getExpectedMinSize(modelOpt)
+
+        // Migrar archivo parcial previo si existiera sin extensión .part
+        if (targetFile.exists() && targetFile.length() in 1 until expectedMin && !partFile.exists()) {
+            targetFile.renameTo(partFile)
+        }
+
+        LlamaRepository.isDownloadingModel = true
+        LlamaRepository.isDownloadPaused = false
+        LlamaRepository.currentDownloadingUrl = url
+        LlamaRepository.currentDownloadingFileName = safeFileName
+        LlamaRepository.currentDownloadingModelName = modelName
+
+        val existingLen = if (partFile.exists()) partFile.length() else 0L
         if (existingLen > 0 && expectedMin > 0) {
             val initialPct = ((existingLen * 100) / expectedMin).toInt().coerceIn(0, 99)
             LlamaRepository.downloadProgress = initialPct / 100f
@@ -253,11 +318,8 @@ class ModelDownloadService : Service() {
             val maxAttempts = 3
             var completedSuccessfully = false
 
-            while (attempt < maxAttempts && !completedSuccessfully) {
-                var existingLength = 0L
-                if (targetFile.exists()) {
-                    existingLength = targetFile.length()
-                }
+            while (attempt < maxAttempts && !completedSuccessfully && isActive) {
+                val existingLength = if (partFile.exists()) partFile.length() else 0L
 
                 val requestBuilder = Request.Builder().url(url)
                 if (existingLength > 0) {
@@ -269,12 +331,23 @@ class ModelDownloadService : Service() {
                         val code = response.code
                         val isResume = (code == 206)
 
-                        if (code != 200 && code != 206) {
-                            if (code == 416) { // Range ya completado
+                        if (code == 416) {
+                            if (partFile.exists() &&
+                                partFile.length() >= expectedMin &&
+                                hasValidModelHeader(partFile, safeFileName) &&
+                                promotePartFile(partFile, targetFile)
+                            ) {
                                 onDownloadSuccess(targetFile, modelName)
                                 completedSuccessfully = true
                                 return@launch
                             }
+                            // Archivo parcial corrupto o inconsistente: reiniciar descarga limpia
+                            partFile.delete()
+                            attempt++
+                            return@use
+                        }
+
+                        if (code != 200 && code != 206) {
                             notifyError("Error del servidor: HTTP $code")
                             return@launch
                         }
@@ -286,25 +359,36 @@ class ModelDownloadService : Service() {
                         }
 
                         val contentLength = body.contentLength()
-                        val totalLength = if (isResume) existingLength + contentLength else contentLength
+                        val totalLength = when {
+                            contentLength <= 0L -> -1L
+                            isResume -> existingLength + contentLength
+                            else -> contentLength
+                        }
 
                         val inputStream = body.byteStream()
-                        val outputStream = FileOutputStream(targetFile, isResume)
+                        val outputStream = FileOutputStream(partFile, isResume)
                         val buffer = ByteArray(32 * 1024)
-                        var read: Int
                         var downloaded = if (isResume) existingLength else 0L
                         var lastProgressUpdate = 0L
                         var lastReportedPercent = -1
 
                         outputStream.use { out ->
                             inputStream.use { inp ->
-                                while (inp.read(buffer).also { read = it } != -1) {
+                                while (isActive) {
+                                    val read = inp.read(buffer)
+                                    if (read == -1) break
                                     out.write(buffer, 0, read)
                                     downloaded += read
 
                                     val now = System.currentTimeMillis()
-                                    val percent = if (totalLength > 0) ((downloaded * 100) / totalLength).toInt() else 0
-                                    if ((now - lastProgressUpdate >= 1000L && percent != lastReportedPercent) || downloaded == totalLength) {
+                                    val percent = if (totalLength > 0) {
+                                        ((downloaded * 100) / totalLength).toInt().coerceIn(0, 100)
+                                    } else {
+                                        0
+                                    }
+                                    if ((now - lastProgressUpdate >= 1000L && percent != lastReportedPercent) ||
+                                        (totalLength > 0 && downloaded == totalLength)
+                                    ) {
                                         withContext(Dispatchers.Main) {
                                             updateProgress(modelName, percent)
                                         }
@@ -315,20 +399,42 @@ class ModelDownloadService : Service() {
                             }
                         }
 
-                        if (totalLength <= 0 || downloaded >= totalLength) {
-                            onDownloadSuccess(targetFile, modelName)
-                            completedSuccessfully = true
+                        if (!isActive) return@launch
+
+                        val sizeComplete = (totalLength <= 0L || downloaded >= totalLength) &&
+                            partFile.length() >= expectedMin
+                        if (!sizeComplete) {
+                            attempt++
+                            Log.w(TAG, "Descarga incompleta ($downloaded / $totalLength bytes), reintentando...")
+                            delay(1500L * attempt)
+                            return@use
                         }
+
+                        if (!hasValidModelHeader(partFile, safeFileName)) {
+                            partFile.delete()
+                            notifyError("El archivo descargado no tiene una cabecera válida ($safeFileName)")
+                            return@launch
+                        }
+
+                        if (!promotePartFile(partFile, targetFile)) {
+                            notifyError("No se pudo guardar el modelo en almacenamiento")
+                            return@launch
+                        }
+
+                        onDownloadSuccess(targetFile, modelName)
+                        completedSuccessfully = true
                     }
+                } catch (ce: CancellationException) {
+                    throw ce
                 } catch (e: Exception) {
                     attempt++
                     Log.w(TAG, "Intento $attempt/$maxAttempts fallido: ${e.message}")
-                    if (attempt < maxAttempts) {
+                    if (attempt < maxAttempts && isActive) {
                         withContext(Dispatchers.Main) {
                             LlamaRepository.downloadStatusText = "Reconectando con Hugging Face (intento $attempt/$maxAttempts)..."
                         }
                         delay(2000L * attempt)
-                    } else {
+                    } else if (isActive) {
                         Log.e(TAG, "Excepción definitiva durante descarga en segundo plano", e)
                         notifyError("Error de red tras $maxAttempts intentos: ${e.localizedMessage ?: "Conexión perdida"}")
                     }
@@ -354,10 +460,9 @@ class ModelDownloadService : Service() {
 
             notificationManager.notify(NOTIFICATION_ID, successNotification)
 
-            // Cargar automáticamente en el motor nativo
             LlamaRepository.onDownloadedModelReady(this@ModelDownloadService, targetFile)
 
-            stopForeground(STOP_FOREGROUND_DETACH)
+            ServiceCompat.stopForeground(this@ModelDownloadService, ServiceCompat.STOP_FOREGROUND_DETACH)
             stopSelf()
         }
     }
@@ -380,7 +485,7 @@ class ModelDownloadService : Service() {
             this,
             0,
             openAppIntent,
-            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+            pendingFlags()
         )
 
         val resumeIntent = Intent(this, ModelDownloadService::class.java).apply {
@@ -390,7 +495,7 @@ class ModelDownloadService : Service() {
             this,
             3,
             resumeIntent,
-            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+            pendingFlags()
         )
 
         val cancelIntent = Intent(this, ModelDownloadService::class.java).apply {
@@ -400,7 +505,7 @@ class ModelDownloadService : Service() {
             this,
             1,
             cancelIntent,
-            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+            pendingFlags()
         )
 
         val pausedNotification = NotificationCompat.Builder(this, CHANNEL_ID)
@@ -417,7 +522,7 @@ class ModelDownloadService : Service() {
 
         notificationManager.notify(NOTIFICATION_ID, pausedNotification)
 
-        stopForeground(STOP_FOREGROUND_DETACH)
+        ServiceCompat.stopForeground(this, ServiceCompat.STOP_FOREGROUND_DETACH)
         stopSelf()
     }
 
@@ -425,12 +530,19 @@ class ModelDownloadService : Service() {
         downloadJob?.cancel()
         downloadJob = null
 
+        val externalDir = getExternalFilesDir(null)
+        val targetName = LlamaRepository.currentDownloadingFileName
+        if (externalDir != null && targetName.isNotBlank()) {
+            val partFile = File(externalDir, "$targetName.part")
+            if (partFile.exists()) partFile.delete()
+        }
+
         LlamaRepository.isDownloadingModel = false
         LlamaRepository.isDownloadPaused = false
         LlamaRepository.downloadProgress = 0f
         LlamaRepository.downloadStatusText = "Descarga cancelada"
 
-        stopForeground(STOP_FOREGROUND_REMOVE)
+        ServiceCompat.stopForeground(this, ServiceCompat.STOP_FOREGROUND_REMOVE)
         stopSelf()
     }
 
@@ -452,7 +564,7 @@ class ModelDownloadService : Service() {
             this,
             0,
             openAppIntent,
-            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+            pendingFlags()
         )
 
         val resumeIntent = Intent(this, ModelDownloadService::class.java).apply {
@@ -462,7 +574,7 @@ class ModelDownloadService : Service() {
             this,
             3,
             resumeIntent,
-            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+            pendingFlags()
         )
 
         val cancelIntent = Intent(this, ModelDownloadService::class.java).apply {
@@ -472,7 +584,7 @@ class ModelDownloadService : Service() {
             this,
             1,
             cancelIntent,
-            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+            pendingFlags()
         )
 
         val errorNotification = NotificationCompat.Builder(this, CHANNEL_ID)
@@ -489,7 +601,7 @@ class ModelDownloadService : Service() {
 
         notificationManager.notify(NOTIFICATION_ID, errorNotification)
 
-        stopForeground(STOP_FOREGROUND_DETACH)
+        ServiceCompat.stopForeground(this, ServiceCompat.STOP_FOREGROUND_DETACH)
         stopSelf()
     }
 

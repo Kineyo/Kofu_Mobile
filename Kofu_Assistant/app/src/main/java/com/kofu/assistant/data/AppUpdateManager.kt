@@ -4,6 +4,7 @@ import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import android.util.Log
+import com.kofu.assistant.BuildConfig
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
@@ -30,8 +31,8 @@ sealed class UpdateCheckResult {
 
 object AppUpdateManager {
     private const val TAG = "AppUpdateManager"
-    const val CURRENT_VERSION_NAME = "2.1.5"
-    const val CURRENT_VERSION_TAG = "2.1.5"
+    val CURRENT_VERSION_NAME: String get() = BuildConfig.VERSION_NAME
+    val CURRENT_VERSION_TAG: String get() = BuildConfig.VERSION_NAME
     private const val GITHUB_RELEASES_URL = "https://api.github.com/repos/Kineyo/Kofu_Mobile/releases"
 
     private val httpClient = OkHttpClient.Builder()

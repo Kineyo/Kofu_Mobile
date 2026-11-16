@@ -34,6 +34,17 @@
             android:exported="false"
             android:foregroundServiceType="dataSync" />
 
+        <receiver
+            android:name=".service.KofuConsoleReceiver"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="com.kofu.assistant.ACTION_CONSOLE_PROMPT" />
+                <action android:name="com.kofu.assistant.ACTION_CONSOLE_LOAD_MODEL" />
+                <action android:name="com.kofu.assistant.ACTION_CONSOLE_STRESS_500" />
+                <action android:name="com.kofu.assistant.ACTION_CONSOLE_STATUS" />
+            </intent-filter>
+        </receiver>
+
     </application>
 
 </manifest>

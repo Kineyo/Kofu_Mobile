@@ -24,6 +24,55 @@ android {
         }
     }
 
+    flavorDimensions += "silicon"
+    productFlavors {
+        create("node7nm") {
+            dimension = "silicon"
+            minSdk = 21
+            targetSdk = 34
+            versionNameSuffix = "-7nm"
+            buildConfigField("String", "SILICON_TIER", "\"7NM_LEGACY\"")
+            externalNativeBuild {
+                cmake {
+                    arguments += listOf(
+                        "-DKOFU_SILICON_TIER=7NM",
+                        "-DKOFU_ARM_ARCH=armv8-a"
+                    )
+                }
+            }
+        }
+        create("node5nm") {
+            dimension = "silicon"
+            minSdk = 26
+            targetSdk = 34
+            versionNameSuffix = "-5nm"
+            buildConfigField("String", "SILICON_TIER", "\"5NM_MAINSTREAM\"")
+            externalNativeBuild {
+                cmake {
+                    arguments += listOf(
+                        "-DKOFU_SILICON_TIER=5NM",
+                        "-DKOFU_ARM_ARCH=armv8.2-a+dotprod+fp16"
+                    )
+                }
+            }
+        }
+        create("frontierSub5nm") {
+            dimension = "silicon"
+            minSdk = 34
+            targetSdk = 34
+            versionNameSuffix = "-frontier"
+            buildConfigField("String", "SILICON_TIER", "\"FRONTIER_SUB5NM\"")
+            externalNativeBuild {
+                cmake {
+                    arguments += listOf(
+                        "-DKOFU_SILICON_TIER=FRONTIER",
+                        "-DKOFU_ARM_ARCH=armv8.6-a+dotprod+fp16+i8mm"
+                    )
+                }
+            }
+        }
+    }
+
     signingConfigs {
         create("release") {
             storeFile = file("debug.keystore")
@@ -58,6 +107,10 @@ android {
     }
     buildFeatures {
         compose = true
+        buildConfig = true
+    }
+    testOptions {
+        unitTests.isReturnDefaultValues = true
     }
     composeOptions {
         kotlinCompilerExtensionVersion = "1.5.8"
@@ -108,6 +161,7 @@ dependencies {
 
     // Testing & Debug Tooling
     testImplementation("junit:junit:4.13.2")
+    testImplementation("org.json:json:20231013")
     debugImplementation("androidx.compose.ui:ui-tooling")
     debugImplementation("androidx.compose.ui:ui-test-manifest")
 }

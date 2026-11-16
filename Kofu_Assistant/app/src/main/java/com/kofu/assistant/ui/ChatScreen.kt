@@ -44,6 +44,7 @@ import androidx.compose.material.icons.filled.Archive
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.PushPin
@@ -69,6 +70,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.material3.rememberDrawerState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
@@ -89,9 +91,11 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.kofu.assistant.BuildConfig
 import com.kofu.assistant.data.ChatCacheManager
 import com.kofu.assistant.data.ChatMessageData
 import com.kofu.assistant.data.ChatSession
+import com.kofu.assistant.data.KofuEditionProfile
 import com.kofu.assistant.repository.InferenceBackend
 import com.kofu.assistant.repository.LlamaRepository
 import com.kofu.assistant.repository.TurnMessage
@@ -103,6 +107,8 @@ import com.kofu.assistant.ui.theme.KofuFontScale
 import com.kofu.assistant.ui.theme.KofuThemeMode
 import com.kofu.assistant.ui.theme.LocalKofuColors
 import com.kofu.assistant.ui.theme.LocalKofuFontScale
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 import java.util.UUID
 
@@ -112,7 +118,8 @@ data class ChatMessage(
     val id: String = UUID.randomUUID().toString(),
     val sender: MessageSender,
     val text: String,
-    val isPending: Boolean = false
+    val isPending: Boolean = false,
+    val isSystemNotice: Boolean = false
 )
 
 private val FORMAL_QUICK_PROMPTS = listOf(
@@ -155,23 +162,26 @@ fun ChatScreen(
     val currentSession = sessions.find { it.id == activeSessionId } ?: sessions.firstOrNull() ?: run {
         val newS = ChatSession(
             title = "Conversación inicial",
-            messages = mutableListOf(ChatMessageData(sender = "KOFU", text = WELCOME_MESSAGE))
+            messages = mutableListOf(
+                ChatMessageData(sender = "KOFU", text = WELCOME_MESSAGE, isSystemNotice = true)
+            )
         )
         sessions.add(newS)
-        ChatCacheManager.saveSessions(context, sessions)
+        ChatCacheManager.saveSessionsAsync(context, sessions)
         newS
     }
 
     val messages = remember(currentSession.id) {
         mutableStateListOf<ChatMessage>().apply {
             if (currentSession.messages.isEmpty()) {
-                add(ChatMessage(sender = MessageSender.KOFU, text = WELCOME_MESSAGE))
+                add(ChatMessage(sender = MessageSender.KOFU, text = WELCOME_MESSAGE, isSystemNotice = true))
             } else {
                 addAll(currentSession.messages.map {
                     ChatMessage(
                         id = it.id,
                         sender = if (it.sender == "USER") MessageSender.USER else MessageSender.KOFU,
-                        text = it.text
+                        text = it.text,
+                        isSystemNotice = it.isSystemNotice || it.text == WELCOME_MESSAGE
                     )
                 })
             }
@@ -180,6 +190,8 @@ fun ChatScreen(
 
     var inputText by remember { mutableStateOf("") }
     var isSending by remember { mutableStateOf(false) }
+    var activeGenerationJob by remember { mutableStateOf<Job?>(null) }
+    var activePendingId by remember { mutableStateOf<String?>(null) }
 
     var showSettingsDialog by remember { mutableStateOf(false) }
     var showTermsDialog by remember { mutableStateOf(false) }
@@ -203,12 +215,13 @@ fun ChatScreen(
                 ChatMessageData(
                     id = it.id,
                     sender = if (it.sender == MessageSender.USER) "USER" else "KOFU",
-                    text = it.text
+                    text = it.text,
+                    isSystemNotice = it.isSystemNotice
                 )
             }
         )
         currentSession.updatedAt = System.currentTimeMillis()
-        ChatCacheManager.saveSessions(context, sessions)
+        ChatCacheManager.saveSessionsAsync(context, sessions)
     }
 
     fun sendMessage(rawText: String) {
@@ -227,23 +240,26 @@ fun ChatScreen(
         persistMessages()
 
         val pendingId = UUID.randomUUID().toString()
+        activePendingId = pendingId
         messages.add(
             ChatMessage(
                 id = pendingId,
                 sender = MessageSender.KOFU,
                 text = "Procesando con llama.cpp...",
-                isPending = true
+                isPending = true,
+                isSystemNotice = true
             )
         )
 
-        scope.launch {
+        activeGenerationJob = scope.launch {
+            var accumulatedText = ""
             try {
-                var accumulatedText = ""
                 var isFirstChunk = true
 
-                val historyTurns = messages
-                    .filter { !it.isPending && it.text.isNotBlank() }
+                val rawTurns = messages
+                    .filter { !it.isPending && !it.isSystemNotice && it.text.isNotBlank() }
                     .map { TurnMessage(if (it.sender == MessageSender.USER) "user" else "model", it.text) }
+                val historyTurns = repository.filterInferenceHistory(rawTurns, WELCOME_MESSAGE)
 
                 repository.generateChatStream(historyTurns).collect { chunk ->
                     if (isFirstChunk) {
@@ -257,7 +273,8 @@ fun ChatScreen(
                             id = pendingId,
                             sender = MessageSender.KOFU,
                             text = accumulatedText,
-                            isPending = false
+                            isPending = false,
+                            isSystemNotice = false
                         )
                     }
                 }
@@ -269,9 +286,22 @@ fun ChatScreen(
                             id = pendingId,
                             sender = MessageSender.KOFU,
                             text = "Sin respuesta del motor.",
-                            isPending = false
+                            isPending = false,
+                            isSystemNotice = true
                         )
                     }
+                }
+                persistMessages()
+            } catch (_: CancellationException) {
+                val index = messages.indexOfFirst { it.id == pendingId }
+                if (index != -1 && messages[index].isPending) {
+                    messages[index] = ChatMessage(
+                        id = pendingId,
+                        sender = MessageSender.KOFU,
+                        text = if (accumulatedText.isNotBlank()) accumulatedText else "[Generación detenida]",
+                        isPending = false,
+                        isSystemNotice = accumulatedText.isBlank()
+                    )
                 }
                 persistMessages()
             } catch (e: Exception) {
@@ -282,18 +312,23 @@ fun ChatScreen(
                         id = pendingId,
                         sender = MessageSender.KOFU,
                         text = "Error de motor: ${e.localizedMessage ?: "Fallo de conexión"}",
-                        isPending = false
+                        isPending = false,
+                        isSystemNotice = true
                     )
                 }
                 persistMessages()
             } finally {
+                if (activePendingId == pendingId) {
+                    activePendingId = null
+                    activeGenerationJob = null
+                }
                 isSending = false
             }
         }
     }
 
     LaunchedEffect(messages.size, messages.lastOrNull()?.text) {
-        if (messages.isNotEmpty()) {
+        if (messages.isNotEmpty() && (isSending || messages.size > 1)) {
             listState.scrollToItem(messages.size - 1)
         }
     }
@@ -301,10 +336,12 @@ fun ChatScreen(
     fun createNewSession() {
         val newS = ChatSession(
             title = "Nueva conversación",
-            messages = mutableListOf(ChatMessageData(sender = "KOFU", text = WELCOME_MESSAGE))
+            messages = mutableListOf(
+                ChatMessageData(sender = "KOFU", text = WELCOME_MESSAGE, isSystemNotice = true)
+            )
         )
         sessions.add(0, newS)
-        ChatCacheManager.saveSessions(context, sessions)
+        ChatCacheManager.saveSessionsAsync(context, sessions)
         activeSessionId = newS.id
     }
 
@@ -313,7 +350,7 @@ fun ChatScreen(
         if (idx != -1) {
             val updated = sessions[idx].copy(isPinned = !sessions[idx].isPinned, updatedAt = System.currentTimeMillis())
             sessions[idx] = updated
-            ChatCacheManager.saveSessions(context, sessions)
+            ChatCacheManager.saveSessionsAsync(context, sessions)
         }
     }
 
@@ -322,7 +359,17 @@ fun ChatScreen(
         if (idx != -1) {
             val updated = sessions[idx].copy(isArchived = !sessions[idx].isArchived, updatedAt = System.currentTimeMillis())
             sessions[idx] = updated
-            ChatCacheManager.saveSessions(context, sessions)
+            ChatCacheManager.saveSessionsAsync(context, sessions)
+        }
+    }
+
+    fun renameSession(session: ChatSession, newTitle: String) {
+        val trimmed = newTitle.trim()
+        if (trimmed.isBlank()) return
+        val idx = sessions.indexOfFirst { it.id == session.id }
+        if (idx != -1) {
+            sessions[idx] = sessions[idx].copy(title = trimmed, updatedAt = System.currentTimeMillis())
+            ChatCacheManager.saveSessionsAsync(context, sessions)
         }
     }
 
@@ -331,11 +378,13 @@ fun ChatScreen(
         if (sessions.isEmpty()) {
             val fresh = ChatSession(
                 title = "Nueva conversación",
-                messages = mutableListOf(ChatMessageData(sender = "KOFU", text = WELCOME_MESSAGE))
+                messages = mutableListOf(
+                    ChatMessageData(sender = "KOFU", text = WELCOME_MESSAGE, isSystemNotice = true)
+                )
             )
             sessions.add(fresh)
         }
-        ChatCacheManager.saveSessions(context, sessions)
+        ChatCacheManager.saveSessionsAsync(context, sessions)
         if (activeSessionId == session.id) {
             activeSessionId = sessions.first().id
         }
@@ -355,6 +404,7 @@ fun ChatScreen(
                     onNewChat = { createNewSession() },
                     onTogglePin = { s -> togglePin(s) },
                     onToggleArchive = { s -> toggleArchive(s) },
+                    onRenameSession = { s, title -> renameSession(s, title) },
                     onDeleteSession = { s -> deleteSession(s) },
                     onCloseDrawer = { scope.launch { drawerState.close() } }
                 )
@@ -597,6 +647,20 @@ fun ChatScreen(
                                     .clickable(enabled = isSending || canSend) {
                                         if (isSending) {
                                             repository.cancelGeneration()
+                                            activeGenerationJob?.cancel()
+                                            val pendingId = activePendingId
+                                            if (pendingId != null) {
+                                                val idx = messages.indexOfFirst { it.id == pendingId }
+                                                if (idx != -1 && messages[idx].isPending) {
+                                                    messages[idx] = ChatMessage(
+                                                        id = pendingId,
+                                                        sender = MessageSender.KOFU,
+                                                        text = "[Generación detenida]",
+                                                        isPending = false,
+                                                        isSystemNotice = true
+                                                    )
+                                                }
+                                            }
                                             isSending = false
                                         } else if (canSend) {
                                             sendMessage(inputText)
@@ -630,10 +694,10 @@ fun ChatScreen(
         onOpenTerms = { showTermsDialog = true },
         onClearChat = {
             messages.clear()
-            messages.add(ChatMessage(sender = MessageSender.KOFU, text = WELCOME_MESSAGE))
+            messages.add(ChatMessage(sender = MessageSender.KOFU, text = WELCOME_MESSAGE, isSystemNotice = true))
             currentSession.messages.clear()
-            currentSession.messages.add(ChatMessageData(sender = "KOFU", text = WELCOME_MESSAGE))
-            ChatCacheManager.saveSessions(context, sessions)
+            currentSession.messages.add(ChatMessageData(sender = "KOFU", text = WELCOME_MESSAGE, isSystemNotice = true))
+            ChatCacheManager.saveSessionsAsync(context, sessions)
         },
         onDismiss = { showSettingsDialog = false }
     )
@@ -666,16 +730,21 @@ private fun ChatsDrawerContent(
     onNewChat: () -> Unit,
     onTogglePin: (ChatSession) -> Unit,
     onToggleArchive: (ChatSession) -> Unit,
+    onRenameSession: (ChatSession, String) -> Unit,
     onDeleteSession: (ChatSession) -> Unit,
     onCloseDrawer: () -> Unit
 ) {
     val colors = LocalKofuColors.current
     var selectedTab by remember { mutableStateOf(0) } // 0: Activos, 1: Archivados
+    var sessionToRename by remember { mutableStateOf<ChatSession?>(null) }
+    var renameInput by remember { mutableStateOf("") }
 
-    val filteredSessions = remember(sessions, selectedTab) {
-        sessions
-            .filter { if (selectedTab == 0) !it.isArchived else it.isArchived }
-            .sortedWith(compareByDescending<ChatSession> { it.isPinned }.thenByDescending { it.updatedAt })
+    val filteredSessions by remember(selectedTab) {
+        derivedStateOf {
+            sessions
+                .filter { if (selectedTab == 0) !it.isArchived else it.isArchived }
+                .sortedWith(compareByDescending<ChatSession> { it.isPinned }.thenByDescending { it.updatedAt })
+        }
     }
 
     Column(
@@ -881,6 +950,22 @@ private fun ChatsDrawerContent(
                                 ) {
                                     DropdownMenuItem(
                                         text = {
+                                            Text("Renombrar")
+                                        },
+                                        leadingIcon = {
+                                            Icon(
+                                                imageVector = Icons.Default.Edit,
+                                                contentDescription = null
+                                            )
+                                        },
+                                        onClick = {
+                                            menuExpanded = false
+                                            renameInput = session.title
+                                            sessionToRename = session
+                                        }
+                                    )
+                                    DropdownMenuItem(
+                                        text = {
                                             Text(if (session.isPinned) "Desfijar" else "Fijar al inicio")
                                         },
                                         leadingIcon = {
@@ -934,6 +1019,59 @@ private fun ChatsDrawerContent(
                 }
             }
         }
+    }
+
+    sessionToRename?.let { target ->
+        AlertDialog(
+            onDismissRequest = { sessionToRename = null },
+            title = {
+                Text(
+                    text = "Renombrar conversación",
+                    fontSize = 15.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = colors.onSurface
+                )
+            },
+            text = {
+                OutlinedTextField(
+                    value = renameInput,
+                    onValueChange = { renameInput = it },
+                    singleLine = true,
+                    shape = KofuDesignSystem.InputShape,
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = OutlinedTextFieldDefaults.colors(
+                        focusedContainerColor = colors.inputBackground,
+                        unfocusedContainerColor = colors.inputBackground,
+                        focusedTextColor = colors.onSurface,
+                        unfocusedTextColor = colors.onSurface,
+                        focusedBorderColor = colors.inputBorderFocused,
+                        unfocusedBorderColor = colors.inputBorder
+                    )
+                )
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        onRenameSession(target, renameInput)
+                        sessionToRename = null
+                    },
+                    shape = KofuDesignSystem.ButtonShape,
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = colors.accent,
+                        contentColor = colors.sendButtonText
+                    )
+                ) {
+                    Text("Guardar", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { sessionToRename = null }) {
+                    Text("Cancelar", color = colors.onSurfaceSecondary, fontSize = 12.sp)
+                }
+            },
+            containerColor = colors.surface,
+            shape = KofuDesignSystem.DialogShape
+        )
     }
 }
 
@@ -1064,17 +1202,18 @@ private fun FormalHeroCard(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.SpaceBetween
             ) {
-                Column {
+                Column(modifier = Modifier.weight(1f)) {
+                    val edition = KofuEditionProfile.current
                     Text(
-                        text = "Kofu Assistant v2.1.5",
+                        text = "${edition.editionTitle} v${BuildConfig.VERSION_NAME}",
                         fontWeight = FontWeight.Bold,
                         color = colors.onSurface,
-                        fontSize = 14.sp
+                        fontSize = 13.5.sp
                     )
                     Text(
-                        text = "Motor llama.cpp nativo ARM64 • Privacidad soberana",
+                        text = "${edition.badgeLabel} • ${edition.aiTaskFocus}",
                         color = colors.onSurfaceSecondary,
-                        fontSize = 11.sp
+                        fontSize = 10.5.sp
                     )
                 }
 
@@ -1255,6 +1394,7 @@ fun FormalFormattedContent(
 ) {
     val clipboard = LocalClipboardManager.current
     val context = LocalContext.current
+    val colors = LocalKofuColors.current
     val codeBlockRegex = remember { Regex("```([a-zA-Z0-9_-]*)\\n?([\\s\\S]*?)```") }
 
     // Si durante el streaming hay un bloque de código abierto sin cerrar, lo cerramos virtualmente para renderizarlo inmediatamente
@@ -1292,10 +1432,10 @@ fun FormalFormattedContent(
 
             Surface(
                 shape = KofuDesignSystem.ButtonShape,
-                color = Color(0xFF030305),
+                color = colors.codeBlockBackground,
                 modifier = Modifier
                     .fillMaxWidth()
-                    .border(1.dp, Color(0xFF1E1E26), KofuDesignSystem.ButtonShape)
+                    .border(1.dp, colors.codeBlockBorder, KofuDesignSystem.ButtonShape)
             ) {
                 Column(modifier = Modifier.padding(8.dp)) {
                     Row(
@@ -1305,14 +1445,14 @@ fun FormalFormattedContent(
                     ) {
                         Text(
                             text = lang.uppercase(),
-                            color = Color(0xFF9CA3AF),
+                            color = colors.onSurfaceSecondary,
                             fontSize = 10.sp,
                             fontWeight = FontWeight.Bold,
                             fontFamily = FontFamily.Monospace
                         )
                         Text(
                             text = "COPIAR",
-                            color = Color(0xFFD1D5DB),
+                            color = colors.onSurface,
                             fontSize = 9.sp,
                             fontWeight = FontWeight.Bold,
                             fontFamily = FontFamily.Monospace,
@@ -1328,7 +1468,7 @@ fun FormalFormattedContent(
                     Spacer(modifier = Modifier.height(4.dp))
                     Text(
                         text = code,
-                        color = Color(0xFFE5E7EB),
+                        color = colors.onSurface,
                         fontSize = fontScale.codeSp.sp,
                         lineHeight = (fontScale.codeSp + 4).sp,
                         fontFamily = FontFamily.Monospace
@@ -1363,6 +1503,7 @@ private fun FormalModelDialog(
     val colors = LocalKofuColors.current
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
+    var diskStateRevision by remember { mutableStateOf(0) }
 
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -1387,7 +1528,9 @@ private fun FormalModelDialog(
                     )
 
                     repository.ollamaAvailableModels.forEach { oModel ->
-                        val isCurrent = repository.ollamaModel == oModel && repository.isModelLoaded
+                        val isCurrent = repository.ollamaModel == oModel &&
+                            repository.isModelLoaded &&
+                            repository.activeBackend == InferenceBackend.OLLAMA_SERVER
                         Surface(
                             color = if (isCurrent) colors.accentSoft else colors.surfaceVariant,
                             shape = KofuDesignSystem.CardShape,
@@ -1404,6 +1547,7 @@ private fun FormalModelDialog(
                                     repository.currentModelName = oModel
                                     repository.activeBackend = InferenceBackend.OLLAMA_SERVER
                                     repository.isModelLoaded = true
+                                    repository.savePreferences(context)
                                     onDismiss()
                                 }
                         ) {
@@ -1446,6 +1590,11 @@ private fun FormalModelDialog(
 
                 repository.AVAILABLE_MODELS.forEach { modelOpt ->
                     val isSelected = modelOpt.id == repository.selectedModel.id
+                    val downloadedSize = remember(modelOpt.id, diskStateRevision) {
+                        repository.getDownloadedModelSizeLabel(context, modelOpt)
+                    }
+                    val isDownloaded = downloadedSize != null
+
                     Surface(
                         color = if (isSelected) colors.accentSoft else colors.surfaceVariant,
                         shape = KofuDesignSystem.CardShape,
@@ -1458,8 +1607,9 @@ private fun FormalModelDialog(
                                 KofuDesignSystem.CardShape
                             )
                             .clickable {
-                                repository.selectedModel = modelOpt
-                                repository.startAutoDownloadIfNeeded(context, scope)
+                                repository.switchModel(context, modelOpt, scope) {
+                                    repository.downloadModel(context, modelOpt)
+                                }
                                 onDismiss()
                             }
                     ) {
@@ -1470,25 +1620,66 @@ private fun FormalModelDialog(
                             horizontalArrangement = Arrangement.SpaceBetween,
                             verticalAlignment = Alignment.CenterVertically
                         ) {
-                            Column {
-                                Text(
-                                    text = modelOpt.shortName,
-                                    fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
-                                    fontSize = 12.sp,
-                                    color = colors.onSurface
-                                )
+                            Column(modifier = Modifier.weight(1f)) {
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                ) {
+                                    Text(
+                                        text = modelOpt.shortName,
+                                        fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
+                                        fontSize = 12.sp,
+                                        color = colors.onSurface
+                                    )
+                                    if (isDownloaded) {
+                                        Text(
+                                            text = "DESCARGADO",
+                                            fontSize = 8.5.sp,
+                                            fontWeight = FontWeight.Bold,
+                                            fontFamily = FontFamily.Monospace,
+                                            color = colors.successAccent
+                                        )
+                                    }
+                                }
                                 Text(
                                     text = modelOpt.name,
                                     fontSize = 10.sp,
                                     color = colors.onSurfaceSecondary
                                 )
                             }
-                            Text(
-                                text = modelOpt.sizeLabel,
-                                fontSize = 10.sp,
-                                color = colors.onSurfaceSecondary,
-                                fontFamily = FontFamily.Monospace
-                            )
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(6.dp)
+                            ) {
+                                Text(
+                                    text = downloadedSize ?: modelOpt.sizeLabel,
+                                    fontSize = 10.sp,
+                                    color = colors.onSurfaceSecondary,
+                                    fontFamily = FontFamily.Monospace
+                                )
+                                if (isDownloaded) {
+                                    IconButton(
+                                        onClick = {
+                                            if (repository.deleteDownloadedModel(context, modelOpt)) {
+                                                diskStateRevision++
+                                                Toast.makeText(
+                                                    context,
+                                                    "Modelo eliminado: ${modelOpt.shortName}",
+                                                    Toast.LENGTH_SHORT
+                                                ).show()
+                                            }
+                                        },
+                                        modifier = Modifier.size(26.dp)
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Default.Delete,
+                                            contentDescription = "Eliminar modelo",
+                                            tint = colors.errorAccent,
+                                            modifier = Modifier.size(15.dp)
+                                        )
+                                    }
+                                }
+                            }
                         }
                     }
                 }

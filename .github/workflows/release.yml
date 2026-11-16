@@ -1,4 +1,4 @@
-name: Build & Release Kofu Mobile
+name: Build & Release Kofu Mobile (3 Silicon Editions)
 
 on:
   push:
@@ -13,9 +13,9 @@ permissions:
 
 jobs:
   build-and-release:
-    name: Build & Publish APK
+    name: Build 3 Silicon Editions (7nm / 5nm / <5nm Frontier)
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 60
 
     steps:
       - name: Checkout Repository
@@ -44,40 +44,60 @@ jobs:
       - name: Make Gradle Wrapper Executable
         run: chmod +x Kofu_Assistant/gradlew
 
-      - name: Build Android APKs (Release & Debug)
+      - name: Run Unit Tests & 500-Question RAG Stress Suite
         run: |
           cd Kofu_Assistant
-          ./gradlew assembleRelease assembleDebug --no-daemon --stacktrace
+          ./gradlew testNode5nmDebugUnitTest --no-daemon --stacktrace
+
+      - name: Build 3 Silicon Edition APKs (7nm Legacy / 5nm Mainstream / <5nm Frontier)
+        run: |
+          cd Kofu_Assistant
+          ./gradlew \
+            assembleNode7nmRelease \
+            assembleNode5nmRelease \
+            assembleFrontierSub5nmRelease \
+            assembleNode5nmDebug \
+            --no-daemon --stacktrace
 
       - name: Organize Release Artifacts
         run: |
           mkdir -p build-artifacts
           VERSION_TAG="${GITHUB_REF_NAME:-v2.1.5}"
-          
-          # Copiar APK Release (firmado con debug keystore para instalación directa)
-          if [ -f Kofu_Assistant/app/build/outputs/apk/release/app-release.apk ]; then
-            cp Kofu_Assistant/app/build/outputs/apk/release/app-release.apk "build-artifacts/Kofu_Assistant-${VERSION_TAG}-arm64-v8a-release.apk"
-            cp Kofu_Assistant/app/build/outputs/apk/release/app-release.apk build-artifacts/app-release.apk
-          elif [ -f Kofu_Assistant/app/build/outputs/apk/release/app-release-unsigned.apk ]; then
-            cp Kofu_Assistant/app/build/outputs/apk/release/app-release-unsigned.apk "build-artifacts/Kofu_Assistant-${VERSION_TAG}-arm64-v8a-release.apk"
-            cp Kofu_Assistant/app/build/outputs/apk/release/app-release-unsigned.apk build-artifacts/app-release.apk
+
+          # 1. Edición 7nm Legacy (Android 5.0–7.x, ARMv8.0-A universal, Síntesis & Consulta Factual Rápida)
+          APK_7NM="Kofu_Assistant/app/build/outputs/apk/node7nm/release/app-node7nm-release.apk"
+          if [ -f "$APK_7NM" ]; then
+            cp "$APK_7NM" "build-artifacts/Kofu_Assistant-${VERSION_TAG}-7nm-Android5-7-arm64-v8a-release.apk"
           fi
 
-          # Copiar APK Debug oficial
-          if [ -f Kofu_Assistant/app/build/outputs/apk/debug/app-debug.apk ]; then
-            cp Kofu_Assistant/app/build/outputs/apk/debug/app-debug.apk "build-artifacts/Kofu_Assistant-${VERSION_TAG}-arm64-v8a-debug.apk"
-            cp Kofu_Assistant/app/build/outputs/apk/debug/app-debug.apk build-artifacts/app-debug.apk
+          # 2. Edición 5nm Mainstream (Android 8.0–15.0, ARMv8.2-A DotProd+FP16, Ingeniería & Código)
+          APK_5NM="Kofu_Assistant/app/build/outputs/apk/node5nm/release/app-node5nm-release.apk"
+          if [ -f "$APK_5NM" ]; then
+            cp "$APK_5NM" "build-artifacts/Kofu_Assistant-${VERSION_TAG}-5nm-Android8-15-arm64-v8a-release.apk"
+            cp "$APK_5NM" "build-artifacts/app-release.apk"
+          fi
+
+          # 3. Edición <5nm Frontier Flagship (Android 16+, ARMv8.6-A/ARMv9 i8mm, Razonamiento Profundo)
+          APK_FRONTIER="Kofu_Assistant/app/build/outputs/apk/frontierSub5nm/release/app-frontierSub5nm-release.apk"
+          if [ -f "$APK_FRONTIER" ]; then
+            cp "$APK_FRONTIER" "build-artifacts/Kofu_Assistant-${VERSION_TAG}-Frontier-Sub5nm-Android16-arm64-v8a-release.apk"
+          fi
+
+          # 4. APK Debug 5nm para pruebas ADB / Consola
+          APK_5NM_DBG="Kofu_Assistant/app/build/outputs/apk/node5nm/debug/app-node5nm-debug.apk"
+          if [ -f "$APK_5NM_DBG" ]; then
+            cp "$APK_5NM_DBG" "build-artifacts/Kofu_Assistant-${VERSION_TAG}-5nm-Android8-15-arm64-v8a-debug.apk"
           fi
 
           # Generar sumas de verificación SHA-256
           cd build-artifacts
           sha256sum *.apk > SHA256SUMS.txt
-          ls -la
+          ls -lh
 
       - name: Upload Artifacts to Workflow
         uses: actions/upload-artifact@v4
         with:
-          name: kofu-mobile-apks
+          name: kofu-mobile-3-editions-apks
           path: build-artifacts/*
           retention-days: 14
 
@@ -85,7 +105,7 @@ jobs:
         if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v2
         with:
-          name: "Kofu Mobile ${{ github.ref_name }} [Estable]"
+          name: "Kofu Mobile ${{ github.ref_name }} [3 Ediciones Edge]"
           tag_name: ${{ github.ref_name }}
           draft: false
           prerelease: false

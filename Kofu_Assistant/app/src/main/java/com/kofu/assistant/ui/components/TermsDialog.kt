@@ -33,6 +33,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
+import com.kofu.assistant.BuildConfig
 import com.kofu.assistant.ui.theme.KofuDesignSystem
 import com.kofu.assistant.ui.theme.LocalKofuColors
 
@@ -142,7 +143,7 @@ fun TermsDialog(
                         horizontalArrangement = Arrangement.Center
                     ) {
                         Text(
-                            text = "Kofu Assistant v2.0 • Build Edge 2026",
+                            text = "Kofu Assistant v${BuildConfig.VERSION_NAME} • Build Edge 2026",
                             color = colors.onSurfaceMuted,
                             fontSize = 10.sp,
                             fontFamily = FontFamily.Monospace

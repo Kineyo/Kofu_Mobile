@@ -1,41 +1,55 @@
 package com.kofu.assistant.repository
 
 import android.content.Context
-import android.content.SharedPreferences
 import android.net.Uri
 import android.provider.OpenableColumns
 import android.util.Log
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
+import com.kofu.assistant.data.ChatCacheManager
+import com.kofu.assistant.data.ChatMessageData
+import com.kofu.assistant.data.ChatSession
+import com.kofu.assistant.data.KofuEditionProfile
+import com.kofu.assistant.data.rag.DynamicDomainRouter
+import com.kofu.assistant.data.rag.HallucinationGuard
+import com.kofu.assistant.data.rag.KofuBenchmark500Suite
+import com.kofu.assistant.data.rag.KofuRagDatabase
+import com.kofu.assistant.data.rag.RagDomain
+import com.kofu.assistant.service.ModelDownloadService
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.callbackFlow
 import kotlinx.coroutines.flow.flowOn
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import okhttp3.OkHttpClient
-import okhttp3.Request
+import org.json.JSONArray
 import org.json.JSONObject
-import kotlinx.coroutines.isActive
 import java.io.File
 import java.io.FileOutputStream
-import java.util.concurrent.TimeUnit
 
 enum class InferenceBackend(val displayName: String, val badgeLabel: String) {
     NONE("Sin motor", "OFFLINE"),
     LITERT("LiteRT C++ (GPU/NPU)", "LiteRT"),
-    GGUF_FALLBACK("GGUF C++ (CPU/JNI ARM64)", "GGUF ARM64"),
-    OLLAMA_SERVER("Servidor Ollama (Laptop)", "OLLAMA")
+    GGUF_FALLBACK("GGUF C++ (ARMv8 Edge)", "EDGE ARMv8"),
+    OLLAMA_SERVER("Servidor Ollama (Opcional)", "OLLAMA")
 }
 
 enum class BackendMode(val displayName: String) {
-    AUTO("Detección Automática (Recomendado)"),
-    OLLAMA("Servidor Ollama (Laptop / Red)"),
-    LOCAL_CPP("Motor Nativo C++ (ARM64 On-Device)")
+    LOCAL_CPP("Motor Edge 100% Offline (Recomendado)"),
+    AUTO("Detección Automática (Edge + Ollama)"),
+    OLLAMA("Servidor Ollama (Red Local)")
+}
+
+enum class AcceleratorPreference(val code: Int, val label: String) {
+    AUTO(0, "Auto (NPU -> GPU -> CPU)"),
+    NPU(1, "Priorizar NPU"),
+    GPU(2, "Priorizar GPU"),
+    CPU(3, "Solo CPU ARMv8")
 }
 
 data class TurnMessage(
@@ -61,42 +75,57 @@ data class DebugMetrics(
     val latencyFirstTokenMs: Long = 0,
     val totalDurationMs: Long = 0,
     val memoryRssMb: Long = 0,
+    val availableRamMb: Long = 0,
     val activeBackend: String = "Inactivo",
     val activeModel: String = "Ninguno",
+    val hardwareTier: String = "NONE",
+    val socModel: String = "",
+    val activeRagDomain: String = "OFF",
+    val ragLookupMs: Long = 0,
+    val ragChunksCount: Int = 0,
     val lastRawPrompt: String = "",
     val lastRawResponse: String = ""
 )
 
 /**
- * Repositorio central de inferencia y configuración de Kofu Assistant.
- * Gestiona el motor nativo en C++ (libkofu_engine.so), la conexión con servidores Ollama,
- * los parámetros de generación y el HUD de depuración.
+ * Repositorio central de inferencia Edge 100% autónoma y offline de Kofu Assistant.
+ * Orquesta el motor nativo C++20 (libkofu_engine.so), el router RAG SQLite FTS4,
+ * el guardia anti-alucinaciones y las pruebas automatizadas por consola ADB.
  */
 object LlamaRepository {
     private const val TAG = "LlamaRepository"
     private const val PREFS_SETTINGS = "kofu_assistant_settings"
+    private const val DEFAULT_SYSTEM_PROMPT =
+        "Eres Kofu, un asistente de IA local útil, atento, privado y respetuoso. Responde de forma clara, precisa y concisa en español."
+
+    private val repositoryScope = CoroutineScope(Dispatchers.Main.immediate + SupervisorJob())
+    @Volatile
+    private var appContext: Context? = null
 
     var isModelLoaded: Boolean by mutableStateOf(false)
     var currentModelName: String by mutableStateOf("")
     var activeBackend: InferenceBackend by mutableStateOf(InferenceBackend.NONE)
     var lastBenchmarkStats: String by mutableStateOf("")
 
-    // Parámetros de Inferencia Configurables
-    var backendMode: BackendMode by mutableStateOf(BackendMode.AUTO)
+    // Autonomía 100% On-Device Offline por defecto
+    var backendMode: BackendMode by mutableStateOf(BackendMode.LOCAL_CPP)
     var ollamaHost: String by mutableStateOf("http://127.0.0.1:11434")
     var ollamaModel: String by mutableStateOf("kofu:latest")
     var isOllamaConnected: Boolean by mutableStateOf(false)
     var ollamaAvailableModels: List<String> by mutableStateOf(emptyList())
 
-    var temperature: Float by mutableStateOf(0.7f)
+    // Configuración Edge, RAG y Aceleración Hardware
+    var isRagEnabled: Boolean by mutableStateOf(true)
+    var preferredAccelerator: AcceleratorPreference by mutableStateOf(AcceleratorPreference.AUTO)
+    var activeHardwareTier: String by mutableStateOf("NONE")
+
+    var temperature: Float by mutableStateOf(KofuEditionProfile.current.defaultTemperature)
     var topP: Float by mutableStateOf(0.9f)
     var repeatPenalty: Float by mutableStateOf(1.1f)
-    var maxTokens: Int by mutableStateOf(2048)
-    var systemPrompt: String by mutableStateOf(
-        "Eres Kofu, un asistente de IA local útil, atento, privado y respetuoso. Responde de forma clara, precisa y concisa en español."
-    )
+    var maxTokens: Int by mutableStateOf(KofuEditionProfile.current.defaultMaxTokens)
+    var systemPrompt: String by mutableStateOf(KofuEditionProfile.current.defaultSystemPrompt)
 
-    // Modo de Depuración (desactivado por defecto)
+    // Modo de Depuración
     var isDebugMode: Boolean by mutableStateOf(false)
     var debugMetrics: DebugMetrics by mutableStateOf(DebugMetrics())
 
@@ -109,18 +138,16 @@ object LlamaRepository {
     var currentDownloadingFileName: String by mutableStateOf("")
     var currentDownloadingModelName: String by mutableStateOf("")
     var downloadTotalBytes: Long by mutableStateOf(0L)
-    private var downloadJob: Job? = null
 
     val ollamaClient: OllamaClient = OllamaClient(ollamaHost)
     private val supportedExtensions = listOf(".litertlm", ".task", ".tflite", ".bin", ".gguf")
 
-    // Modelos Oficiales Kofu Edge
     val AVAILABLE_MODELS = listOf(
         ModelOption(
             id = "kofu-v2",
             name = "Kofu 2.0 Edge (Gemma 2 2B)",
             shortName = "Kofu 2.0",
-            description = "Modelo predeterminado optimizado para teléfonos móviles ARM64. Rápido, preciso y equilibrado en español.",
+            description = "Modelo predeterminado optimizado para teléfonos Snapdragon ARMv8. Rápido, preciso y equilibrado en español.",
             fileName = "kofu-v2-edge-q4_k_m.gguf",
             downloadUrl = "https://huggingface.co/shebxyd/kofu-v2-edge/resolve/main/kofu-v2-edge-q4_k_m.gguf",
             sizeLabel = "~1.6 GB",
@@ -151,31 +178,85 @@ object LlamaRepository {
         )
     )
 
-    var selectedModel: ModelOption by mutableStateOf(AVAILABLE_MODELS.first())
+    var selectedModel: ModelOption by mutableStateOf(
+        AVAILABLE_MODELS.find { it.id == KofuEditionProfile.current.defaultModelId } ?: AVAILABLE_MODELS.first()
+    )
 
     init {
         if (KofuNativeEngine.isNativeReady()) {
             KofuNativeEngine.nativeInit()
-            Log.i(TAG, "Motor nativo C++ v2.0 inicializado")
+            syncNativeConfig()
+            Log.i(TAG, "Motor nativo C++20 Edge inicializado")
         } else {
             Log.w(TAG, "Librería nativa C++ aún no cargada")
         }
     }
 
-    /**
-     * Carga y sincroniza las preferencias persistentes del usuario.
-     */
+    fun syncNativeConfig(
+        effectiveTemp: Float = temperature,
+        effectiveSystemPrompt: String = systemPrompt,
+        effectiveMaxTokens: Int = maxTokens
+    ) {
+        if (!KofuNativeEngine.isNativeReady()) return
+        KofuNativeEngine.nativeSetPreferredAccelerator(preferredAccelerator.code)
+        KofuNativeEngine.nativeSetGenerationConfig(
+            temperature = effectiveTemp,
+            topP = topP,
+            repeatPenalty = repeatPenalty,
+            maxTokens = effectiveMaxTokens,
+            systemPrompt = effectiveSystemPrompt
+        )
+    }
+
+    fun filterInferenceHistory(turns: List<TurnMessage>, welcomeText: String): List<TurnMessage> {
+        val cleaned = mutableListOf<TurnMessage>()
+        var seenUser = false
+        for (turn in turns) {
+            val content = turn.content.trim()
+            if (content.isBlank()) continue
+            if (content == welcomeText ||
+                content.startsWith("Error [") ||
+                content.startsWith("Error de motor:") ||
+                content == "Sin respuesta del motor."
+            ) {
+                continue
+            }
+            val role = turn.role.lowercase()
+            if (!seenUser) {
+                if (role != "user") continue
+                seenUser = true
+            }
+            cleaned.add(TurnMessage(role = role, content = content))
+        }
+        return cleaned
+    }
+
     fun loadPreferences(context: Context) {
-        val prefs = context.getSharedPreferences(PREFS_SETTINGS, Context.MODE_PRIVATE)
+        val appCtx = context.applicationContext
+        appContext = appCtx
+        val prefs = appCtx.getSharedPreferences(PREFS_SETTINGS, Context.MODE_PRIVATE)
         ollamaHost = prefs.getString("ollama_host", "http://127.0.0.1:11434") ?: "http://127.0.0.1:11434"
         ollamaModel = prefs.getString("ollama_model", "kofu:latest") ?: "kofu:latest"
-        val savedMode = prefs.getString("backend_mode", BackendMode.AUTO.name)
-        backendMode = runCatching { BackendMode.valueOf(savedMode ?: BackendMode.AUTO.name) }.getOrDefault(BackendMode.AUTO)
-        temperature = prefs.getFloat("temperature", 0.7f)
+        val savedMode = prefs.getString("backend_mode", BackendMode.LOCAL_CPP.name)
+        backendMode = runCatching {
+            BackendMode.valueOf(savedMode ?: BackendMode.LOCAL_CPP.name)
+        }.getOrDefault(BackendMode.LOCAL_CPP)
+
+        val edition = KofuEditionProfile.current
+        val savedModelId = prefs.getString("selected_model_id", edition.defaultModelId)
+        if (!savedModelId.isNullOrBlank()) {
+            AVAILABLE_MODELS.find { it.id == savedModelId }?.let { selectedModel = it }
+        }
+
+        isRagEnabled = prefs.getBoolean("rag_enabled", true)
+        val accelCode = prefs.getInt("preferred_accelerator", AcceleratorPreference.AUTO.code)
+        preferredAccelerator = AcceleratorPreference.entries.find { it.code == accelCode } ?: AcceleratorPreference.AUTO
+
+        temperature = prefs.getFloat("temperature", edition.defaultTemperature)
         topP = prefs.getFloat("top_p", 0.9f)
         repeatPenalty = prefs.getFloat("repeat_penalty", 1.1f)
-        maxTokens = prefs.getInt("max_tokens", 2048)
-        systemPrompt = prefs.getString("system_prompt", systemPrompt) ?: systemPrompt
+        maxTokens = prefs.getInt("max_tokens", edition.defaultMaxTokens)
+        systemPrompt = prefs.getString("system_prompt", edition.defaultSystemPrompt) ?: edition.defaultSystemPrompt
         isDebugMode = prefs.getBoolean("debug_mode", false)
 
         isDownloadPaused = prefs.getBoolean("download_paused", false)
@@ -184,8 +265,7 @@ object LlamaRepository {
         currentDownloadingModelName = prefs.getString("download_model_name", "") ?: ""
         downloadTotalBytes = prefs.getLong("download_total_bytes", 0L)
 
-        // Comprobar si existe descarga parcial en disco al iniciar la aplicación
-        val partial = getPartialModelFile(context, selectedModel)
+        val partial = getPartialModelFile(appCtx, selectedModel)
         if (partial != null) {
             val expected = getExpectedMinSize(selectedModel)
             val pct = (partial.length().toFloat() / expected).coerceIn(0f, 0.99f)
@@ -198,14 +278,20 @@ object LlamaRepository {
         }
 
         ollamaClient.updateBaseUrl(ollamaHost)
+        syncNativeConfig()
     }
 
     fun savePreferences(context: Context) {
-        val prefs = context.getSharedPreferences(PREFS_SETTINGS, Context.MODE_PRIVATE)
+        val appCtx = context.applicationContext
+        appContext = appCtx
+        val prefs = appCtx.getSharedPreferences(PREFS_SETTINGS, Context.MODE_PRIVATE)
         prefs.edit().apply {
             putString("ollama_host", ollamaHost)
             putString("ollama_model", ollamaModel)
             putString("backend_mode", backendMode.name)
+            putString("selected_model_id", selectedModel.id)
+            putBoolean("rag_enabled", isRagEnabled)
+            putInt("preferred_accelerator", preferredAccelerator.code)
             putFloat("temperature", temperature)
             putFloat("top_p", topP)
             putFloat("repeat_penalty", repeatPenalty)
@@ -220,12 +306,14 @@ object LlamaRepository {
             apply()
         }
         ollamaClient.updateBaseUrl(ollamaHost)
+        syncNativeConfig()
     }
 
-    /**
-     * Comprueba la conectividad con el servidor Ollama en la laptop o red local.
-     */
     fun probeOllama(scope: CoroutineScope, onFinished: (Boolean) -> Unit = {}) {
+        if (backendMode == BackendMode.LOCAL_CPP) {
+            onFinished(false)
+            return
+        }
         scope.launch(Dispatchers.IO) {
             val res = ollamaClient.checkHealthAndFetchModels()
             withContext(Dispatchers.Main) {
@@ -235,14 +323,13 @@ object LlamaRepository {
                     isOllamaConnected = true
                     ollamaAvailableModels = names
 
-                    // Si kofu:latest existe en el servidor, seleccionarlo preferentemente
                     if (names.any { it.contains("kofu") }) {
                         ollamaModel = names.first { it.contains("kofu") }
                     } else if (names.isNotEmpty() && !names.contains(ollamaModel)) {
                         ollamaModel = names.first()
                     }
 
-                    if (backendMode == BackendMode.AUTO || backendMode == BackendMode.OLLAMA) {
+                    if (backendMode == BackendMode.OLLAMA || (backendMode == BackendMode.AUTO && !KofuNativeEngine.nativeIsModelLoaded())) {
                         activeBackend = InferenceBackend.OLLAMA_SERVER
                         isModelLoaded = true
                         currentModelName = "$ollamaModel (Ollama)"
@@ -264,15 +351,14 @@ object LlamaRepository {
         }
     }
 
-    /**
-     * Carga un modelo en el backend C++.
-     */
     fun loadModel(
         context: Context,
         modelUri: Uri,
-        scope: CoroutineScope
+        scope: CoroutineScope = repositoryScope
     ) {
-        val fileName = resolveFileName(context, modelUri)
+        val appCtx = context.applicationContext
+        appContext = appCtx
+        val fileName = resolveFileName(appCtx, modelUri)
         val lower = fileName.lowercase()
 
         if (supportedExtensions.none { lower.endsWith(it) }) {
@@ -288,13 +374,10 @@ object LlamaRepository {
 
             if (modelUri.scheme == "content") {
                 try {
-                    context.contentResolver.openFileDescriptor(modelUri, "r")?.use { pfd ->
+                    appCtx.contentResolver.openFileDescriptor(modelUri, "r")?.use { pfd ->
                         val size = pfd.statSize
                         val fd = pfd.detachFd()
                         loaded = KofuNativeEngine.nativeLoadModelFd(fd, size, fileName)
-                        if (!loaded) {
-                            runCatching { android.os.ParcelFileDescriptor.adoptFd(fd).close() }
-                        }
                     }
                 } catch (e: Exception) {
                     Log.w(TAG, "Fallo al mapear FD directo, intentando ruta alternativa...", e)
@@ -302,7 +385,7 @@ object LlamaRepository {
             }
 
             if (!loaded) {
-                val localFilePath = resolveLocalFilePath(context, modelUri, fileName)
+                val localFilePath = resolveLocalFilePath(appCtx, modelUri, fileName)
                 if (localFilePath != null) {
                     loaded = KofuNativeEngine.nativeLoadModel(localFilePath)
                 }
@@ -312,31 +395,62 @@ object LlamaRepository {
                 if (loaded) {
                     isModelLoaded = true
                     currentModelName = KofuNativeEngine.nativeGetModelName()
+                    activeHardwareTier = KofuNativeEngine.nativeGetActiveHardwareTier()
                     activeBackend = when (KofuNativeEngine.nativeGetBackendType()) {
                         1 -> InferenceBackend.LITERT
-                        2 -> InferenceBackend.GGUF_FALLBACK
                         else -> InferenceBackend.GGUF_FALLBACK
                     }
-                    lastBenchmarkStats = KofuNativeEngine.nativeGetStatsJson()
+                    syncNativeConfig()
+                    val statsJson = KofuNativeEngine.nativeGetStatsJson()
+                    lastBenchmarkStats = statsJson
+                    val parsed = runCatching { JSONObject(statsJson) }.getOrNull()
                     debugMetrics = debugMetrics.copy(
-                        activeBackend = activeBackend.displayName,
-                        activeModel = currentModelName
+                        activeBackend = "${activeBackend.displayName} [$activeHardwareTier]",
+                        activeModel = currentModelName,
+                        hardwareTier = activeHardwareTier,
+                        socModel = parsed?.optString("soc_model", "") ?: "",
+                        availableRamMb = parsed?.optLong("available_ram_mb", 0L) ?: 0L
                     )
-                    Log.i(TAG, "Modelo cargado en C++: $currentModelName | Backend: ${activeBackend.displayName}")
+                    Log.i(TAG, "Modelo cargado en C++ [$activeHardwareTier]: $currentModelName")
                 } else {
-                    // Si falla la carga local y Ollama está disponible, redirigir limpiamente
-                    if (isOllamaConnected) {
+                    if (isOllamaConnected && backendMode != BackendMode.LOCAL_CPP) {
                         activeBackend = InferenceBackend.OLLAMA_SERVER
                         isModelLoaded = true
                         currentModelName = "$ollamaModel (Ollama)"
                     } else {
                         isModelLoaded = false
                         activeBackend = InferenceBackend.NONE
+                        activeHardwareTier = "NONE"
                         currentModelName = "Error: Fallo al cargar en el motor C++"
                     }
                 }
             }
         }
+    }
+
+    /**
+     * Carga síncrona directa por ruta de archivo (usada por consola ADB y tests de estrés).
+     */
+    suspend fun loadModelFromPathSync(context: Context, filePath: String): Boolean = withContext(Dispatchers.IO) {
+        appContext = context.applicationContext
+        val file = File(filePath)
+        if (!file.exists() || !file.canRead()) {
+            Log.e(TAG, "Modelo no encontrado o sin permiso de lectura: $filePath")
+            return@withContext false
+        }
+        KofuNativeEngine.nativeSetPreferredAccelerator(preferredAccelerator.code)
+        val ok = KofuNativeEngine.nativeLoadModel(file.absolutePath)
+        withContext(Dispatchers.Main) {
+            if (ok) {
+                isModelLoaded = true
+                currentModelName = KofuNativeEngine.nativeGetModelName()
+                activeHardwareTier = KofuNativeEngine.nativeGetActiveHardwareTier()
+                activeBackend = InferenceBackend.GGUF_FALLBACK
+                syncNativeConfig()
+                lastBenchmarkStats = KofuNativeEngine.nativeGetStatsJson()
+            }
+        }
+        ok
     }
 
     private fun resolveLocalFilePath(context: Context, uri: Uri, fileName: String): String? {
@@ -350,6 +464,13 @@ object LlamaRepository {
                 Log.e(TAG, "Ruta no permitida (Path Traversal)")
                 return null
             }
+
+            context.cacheDir.listFiles { file ->
+                file.name.startsWith("kofu_active_model_") && file.name != cacheFile.name
+            }?.forEach { staleFile ->
+                staleFile.delete()
+            }
+
             if (!cacheFile.exists() || cacheFile.length() < 1024L) {
                 context.contentResolver.openInputStream(uri)?.use { input ->
                     FileOutputStream(cacheFile).use { output ->
@@ -382,19 +503,57 @@ object LlamaRepository {
         return uri.lastPathSegment ?: "modelo_kofu.gguf"
     }
 
-    /**
-     * Generación de texto multi-turno adaptativa:
-     * Si el servidor Ollama está activo, genera por streaming HTTP en tiempo real.
-     * Si no, utiliza el motor C++ nativo ARM64.
-     */
-    fun generateChatStream(history: List<TurnMessage>): Flow<String> = callbackFlow {
+    fun generateChatStream(
+        history: List<TurnMessage>,
+        maxTokensOverride: Int? = null
+    ): Flow<String> = callbackFlow {
         val shouldUseOllama = when (backendMode) {
             BackendMode.OLLAMA -> true
             BackendMode.LOCAL_CPP -> false
             BackendMode.AUTO -> activeBackend == InferenceBackend.OLLAMA_SERVER || (!KofuNativeEngine.nativeIsModelLoaded() && isOllamaConnected)
         }
 
-        val fullPromptRepresentation = history.joinToString("\n") { "[${it.role.uppercase()}]: ${it.content}" }
+        // Enrutamiento dinámico RAG Offline + Guardia Anti-Alucinaciones sobre la última consulta del usuario
+        var effectiveHistory = history
+        var effectiveTemp = temperature
+        var effectiveSystem = systemPrompt
+        var ragDomainLabel = "OFF"
+        var ragLookupMs = 0L
+        var ragChunksCount = 0
+
+        val lastUserIdx = history.indexOfLast { it.role.equals("user", ignoreCase = true) }
+        val ctx = appContext
+        if (isRagEnabled && lastUserIdx >= 0 && ctx != null) {
+            val userQuery = history[lastUserIdx].content
+            val ragResult = KofuRagDatabase.getInstance(ctx).retrieveDynamicContext(userQuery)
+            val grounded = HallucinationGuard.prepareGroundedPrompt(
+                userQuery = userQuery,
+                ragResult = ragResult,
+                baseTemperature = temperature,
+                baseSystemPrompt = systemPrompt
+            )
+            effectiveTemp = grounded.effectiveTemperature
+            effectiveSystem = grounded.effectiveSystemPrompt
+            ragDomainLabel = ragResult.domain.id
+            ragLookupMs = ragResult.lookupTimeMs
+            ragChunksCount = ragResult.matchedChunks.size
+
+            if (grounded.augmentedUserPrompt != userQuery) {
+                val mutable = history.toMutableList()
+                mutable[lastUserIdx] = TurnMessage("user", grounded.augmentedUserPrompt)
+                effectiveHistory = mutable
+            }
+        }
+
+        val effectiveMaxTokens = maxTokensOverride ?: maxTokens
+        val fullPromptRepresentation = buildString {
+            append("[SYSTEM | temp=").append("%.2f".format(effectiveTemp))
+            append(" | RAG=").append(ragDomainLabel).append("]: ").append(effectiveSystem).append('\n')
+            effectiveHistory.forEach {
+                append('[').append(it.role.uppercase()).append("]: ").append(it.content).append('\n')
+            }
+        }.trimEnd()
+
         val startTime = System.currentTimeMillis()
 
         if (shouldUseOllama) {
@@ -402,13 +561,13 @@ object LlamaRepository {
             val accumulated = StringBuilder()
 
             ollamaClient.chatStream(
-                history = history,
+                history = effectiveHistory,
                 modelName = ollamaModel,
-                systemPrompt = systemPrompt,
-                temperature = temperature,
+                systemPrompt = effectiveSystem,
+                temperature = effectiveTemp,
                 topP = topP,
                 repeatPenalty = repeatPenalty,
-                maxTokens = maxTokens,
+                maxTokens = effectiveMaxTokens,
                 onFirstTokenLatency = { ttft ->
                     ttftLatency = ttft
                 }
@@ -431,6 +590,10 @@ object LlamaRepository {
                         memoryRssMb = 0L,
                         activeBackend = "Servidor Ollama (${ollamaClient.getBaseUrl()})",
                         activeModel = ollamaModel,
+                        hardwareTier = "REMOTE",
+                        activeRagDomain = ragDomainLabel,
+                        ragLookupMs = ragLookupMs,
+                        ragChunksCount = ragChunksCount,
                         lastRawPrompt = fullPromptRepresentation,
                         lastRawResponse = accumulated.toString()
                     )
@@ -440,20 +603,25 @@ object LlamaRepository {
             return@callbackFlow
         }
 
-        // Ejecución C++ Nativa
+        // Ejecución C++ Nativa 100% Offline
         if (!KofuNativeEngine.nativeIsModelLoaded()) {
-            trySend("Error [Kofu Engine]: No hay un modelo cargado en memoria local ni servidor Ollama conectado. Abre Ajustes para conectar a la laptop o cargar un modelo.")
+            trySend("Error [Kofu Engine]: No hay un modelo GGUF cargado en memoria local. Importa un modelo o espera a que finalice la descarga.")
             close()
             return@callbackFlow
         }
 
-        // Preservar system prompt y limitar historial reciente a máximo 14 turnos para respetar los 2048 tokens
-        val boundedHistory = if (history.size > 14) {
-            val sysTurns = history.filter { it.role == "system" }
-            val recentTurns = history.filter { it.role != "system" }.takeLast(12)
+        syncNativeConfig(
+            effectiveTemp = effectiveTemp,
+            effectiveSystemPrompt = effectiveSystem,
+            effectiveMaxTokens = effectiveMaxTokens
+        )
+
+        val boundedHistory = if (effectiveHistory.size > 16) {
+            val sysTurns = effectiveHistory.filter { it.role == "system" }
+            val recentTurns = effectiveHistory.filter { it.role != "system" }.takeLast(14)
             sysTurns + recentTurns
         } else {
-            history
+            effectiveHistory
         }
 
         val roles = boundedHistory.map { it.role }.toTypedArray()
@@ -484,15 +652,22 @@ object LlamaRepository {
 
         val statsJson = KofuNativeEngine.nativeGetStatsJson()
         var nativeRssMb = 0L
+        var availRamMb = 0L
+        var tier = KofuNativeEngine.nativeGetActiveHardwareTier()
+        var soc = ""
         try {
             val json = JSONObject(statsJson)
             nativeRssMb = json.optLong("memory_rss_mb", 0L)
+            availRamMb = json.optLong("available_ram_mb", 0L)
+            tier = json.optString("hardware_tier", tier)
+            soc = json.optString("soc_model", "")
             val parsedTps = json.optDouble("tokens_per_sec", 0.0)
             if (parsedTps > 0.0) tps = parsedTps
         } catch (e: Exception) {
             Log.w(TAG, "No se pudo parsear statsJson nativo", e)
         }
 
+        activeHardwareTier = tier
         lastBenchmarkStats = statsJson
         debugMetrics = DebugMetrics(
             tokensGenerated = tokenCount,
@@ -500,8 +675,14 @@ object LlamaRepository {
             latencyFirstTokenMs = firstTokenTime,
             totalDurationMs = totalTime,
             memoryRssMb = nativeRssMb,
-            activeBackend = activeBackend.displayName,
+            availableRamMb = availRamMb,
+            activeBackend = "${activeBackend.displayName} [$tier]",
             activeModel = currentModelName,
+            hardwareTier = tier,
+            socModel = soc,
+            activeRagDomain = ragDomainLabel,
+            ragLookupMs = ragLookupMs,
+            ragChunksCount = ragChunksCount,
             lastRawPrompt = fullPromptRepresentation,
             lastRawResponse = responseAcc.toString()
         )
@@ -513,15 +694,166 @@ object LlamaRepository {
         }
     }.flowOn(Dispatchers.IO)
 
+    /**
+     * Ejecuta la batería automatizada de 500 preguntas en el dispositivo verificando:
+     * RAG dinámico, temp capping, velocidad por token, memoria RAM y persistencia en disco.
+     */
+    suspend fun runAutomatedStressBenchmark(
+        context: Context,
+        questionCount: Int = 500,
+        maxTokensPerQuestion: Int = 16,
+        fullLlmAllQuestions: Boolean = false,
+        onProgress: (Int, String) -> Unit = { _, _ -> }
+    ): File = withContext(Dispatchers.IO) {
+        val appCtx = context.applicationContext
+        appContext = appCtx
+        val ragDb = KofuRagDatabase.getInstance(appCtx)
+        val questions = KofuBenchmark500Suite.generate500Questions().take(questionCount.coerceIn(1, 500))
+        val hasModel = KofuNativeEngine.nativeIsModelLoaded()
+
+        val sessions = ChatCacheManager.loadSessions(appCtx)
+        val benchSession = ChatSession(title = "Benchmark 500 Preguntas (${if (hasModel) "On-Device LLM" else "RAG Only"})")
+        sessions.add(0, benchSession)
+
+        val reportResults = JSONArray()
+        var domainHits = 0
+        var totalRagMs = 0L
+        var totalInferenceMs = 0L
+        var totalTokensGen = 0
+        var llmEvaluatedCount = 0
+        var minAvailRamMb = Long.MAX_VALUE
+        var maxRssMb = 0L
+        var errorCount = 0
+
+        val startAllMs = System.currentTimeMillis()
+        Log.i("KofuConsole", "=== INICIANDO BENCHMARK DE ${questions.size} PREGUNTAS (ModelLoaded=$hasModel | Tier=${KofuNativeEngine.nativeGetActiveHardwareTier()} | FullLLM=$fullLlmAllQuestions) ===")
+
+        for ((idx, q) in questions.withIndex()) {
+            val ragRes = ragDb.retrieveDynamicContext(q.prompt)
+            val domainOk = ragRes.domain == q.expectedDomain || q.category == "STRESS_ANTI_HALLUCINATION"
+            if (domainOk) domainHits++
+            totalRagMs += ragRes.lookupTimeMs
+
+            val grounded = HallucinationGuard.prepareGroundedPrompt(
+                userQuery = q.prompt,
+                ragResult = ragRes,
+                baseTemperature = temperature,
+                baseSystemPrompt = systemPrompt
+            )
+
+            val runLlmOnThisItem = hasModel && (fullLlmAllQuestions || (idx % 20 == 0))
+            val responseBuilder = StringBuilder()
+            val qStart = System.currentTimeMillis()
+            if (runLlmOnThisItem) {
+                llmEvaluatedCount++
+                try {
+                    generateChatStream(
+                        history = listOf(TurnMessage("user", q.prompt)),
+                        maxTokensOverride = maxTokensPerQuestion
+                    ).collect { tok ->
+                        responseBuilder.append(tok)
+                    }
+                } catch (e: Exception) {
+                    errorCount++
+                    Log.e("KofuConsole", "Error en pregunta #${q.id}: ${e.message}", e)
+                }
+            } else {
+                responseBuilder.append(
+                    if (ragRes.formattedContext.isNotBlank()) ragRes.formattedContext
+                    else "[CHITCHAT / SIN CONTEXTO EXTRA]"
+                )
+            }
+            val qElapsed = System.currentTimeMillis() - qStart
+            if (runLlmOnThisItem) {
+                totalInferenceMs += qElapsed
+            }
+
+            val cleanResp = HallucinationGuard.sanitizeAndValidateResponse(responseBuilder.toString())
+            if (cleanResp.isBlank() || cleanResp.startsWith("Error [")) {
+                errorCount++
+            }
+
+            if (runLlmOnThisItem) {
+                totalTokensGen += debugMetrics.tokensGenerated
+                if (debugMetrics.availableRamMb > 0 && debugMetrics.availableRamMb < minAvailRamMb) {
+                    minAvailRamMb = debugMetrics.availableRamMb
+                }
+                if (debugMetrics.memoryRssMb > maxRssMb) {
+                    maxRssMb = debugMetrics.memoryRssMb
+                }
+            }
+
+            benchSession.messages.add(ChatMessageData(sender = "USER", text = q.prompt))
+            benchSession.messages.add(ChatMessageData(sender = "KOFU", text = cleanResp.ifBlank { "[vacío]" }))
+            ChatCacheManager.compactSessionsInPlace(sessions)
+
+            if ((idx + 1) % 25 == 0 || idx == questions.lastIndex) {
+                ChatCacheManager.flushSync(appCtx, sessions)
+                val tpsAvg = if (totalInferenceMs > 0) (totalTokensGen * 1000.0) / totalInferenceMs else 0.0
+                val summaryLine = "Progreso ${idx + 1}/${questions.size} | DomOK=$domainHits | RAG=${totalRagMs}ms | LLMCalls=$llmEvaluatedCount | GenTok=$totalTokensGen (${"%.1f".format(tpsAvg)} t/s) | MaxRSS=${maxRssMb}MB | MinAvailRAM=${if (minAvailRamMb == Long.MAX_VALUE) 0 else minAvailRamMb}MB | Err=$errorCount"
+                Log.i("KofuConsole", summaryLine)
+                onProgress(idx + 1, summaryLine)
+            }
+
+            if (runLlmOnThisItem || q.isAntiHallucinationTrap || cleanResp.startsWith("Error")) {
+                val item = JSONObject().apply {
+                    put("id", q.id)
+                    put("category", q.category)
+                    put("domain", ragRes.domain.id)
+                    put("llm_evaluated", runLlmOnThisItem)
+                    put("rag_ms", ragRes.lookupTimeMs)
+                    put("effective_temp", grounded.effectiveTemperature.toDouble())
+                    put("elapsed_ms", qElapsed)
+                    put("prompt", q.prompt)
+                    put("response_preview", cleanResp.take(180))
+                }
+                reportResults.put(item)
+            }
+        }
+
+        ChatCacheManager.flushSync(appCtx, sessions)
+        val totalWallMs = System.currentTimeMillis() - startAllMs
+        val avgTps = if (totalInferenceMs > 0) (totalTokensGen * 1000.0) / totalInferenceMs else 0.0
+
+        val finalReport = JSONObject().apply {
+            put("total_questions", questions.size)
+            put("llm_evaluated_questions", llmEvaluatedCount)
+            put("model_loaded", hasModel)
+            put("model_name", currentModelName)
+            put("hardware_tier", KofuNativeEngine.nativeGetActiveHardwareTier())
+            put("domain_routing_accuracy_pct", (domainHits * 100.0) / questions.size)
+            put("total_rag_lookup_ms", totalRagMs)
+            put("avg_rag_lookup_ms", totalRagMs.toDouble() / questions.size)
+            put("total_tokens_generated", totalTokensGen)
+            put("avg_tokens_per_sec", avgTps)
+            put("max_rss_mb", maxRssMb)
+            put("min_available_ram_mb", if (minAvailRamMb == Long.MAX_VALUE) 0 else minAvailRamMb)
+            put("persisted_session_messages", benchSession.messages.size)
+            put("error_count", errorCount)
+            put("total_wall_time_ms", totalWallMs)
+            put("samples", reportResults)
+        }
+
+        val outDir = appCtx.getExternalFilesDir(null) ?: appCtx.filesDir
+        val reportFile = File(outDir, "kofu_stress_500_report.json")
+        reportFile.writeText(finalReport.toString(2), Charsets.UTF_8)
+
+        Log.i("KofuConsole", "=== BENCHMARK 500 COMPLETADO EN ${totalWallMs}ms | Archivo=${reportFile.absolutePath} ===")
+        Log.i("KofuConsole", finalReport.toString())
+        reportFile
+    }
+
     fun cancelGeneration() {
-        KofuNativeEngine.nativeCancelGeneration()
+        if (KofuNativeEngine.isNativeReady()) {
+            KofuNativeEngine.nativeCancelGeneration()
+        }
     }
 
     fun getExpectedMinSize(modelOption: ModelOption): Long {
         return when (modelOption.id) {
-            "kofu-2b" -> 1_200_000_000L // ~1.4 GB
-            "kofu-gemma4" -> 4_500_000_000L // ~5.3 GB
-            else -> 1_400_000_000L // ~1.6 GB para kofu-v2
+            "kofu-2b" -> 1_200_000_000L
+            "kofu-gemma4" -> 4_500_000_000L
+            else -> 1_400_000_000L
         }
     }
 
@@ -537,21 +869,59 @@ object LlamaRepository {
         return if (file.exists() && file.length() >= getExpectedMinSize(modelOption)) file else null
     }
 
+    fun getDownloadedModelSizeLabel(context: Context, modelOption: ModelOption): String? {
+        val file = getLocalModelFile(context, modelOption) ?: return null
+        val gb = file.length() / (1024.0 * 1024.0 * 1024.0)
+        return if (gb >= 1.0) "%.2f GB".format(gb) else "${file.length() / (1024 * 1024)} MB"
+    }
+
     fun getPartialModelFile(context: Context, modelOption: ModelOption = selectedModel): File? {
         val externalDir = context.getExternalFilesDir(null) ?: return null
         val targetName = currentDownloadingFileName.ifBlank { modelOption.fileName }
-        val file = File(externalDir, targetName)
+        val partFile = File(externalDir, "$targetName.part")
+        if (partFile.exists() && partFile.length() > 0 && !isModelLoaded) {
+            return partFile
+        }
+        val legacyFile = File(externalDir, targetName)
         val expected = getExpectedMinSize(modelOption)
-        return if (file.exists() && file.length() > 0 && file.length() < expected && !isModelLoaded) file else null
+        return if (legacyFile.exists() && legacyFile.length() in 1 until expected && !isModelLoaded) {
+            legacyFile
+        } else {
+            null
+        }
+    }
+
+    fun deleteDownloadedModel(context: Context, modelOption: ModelOption): Boolean {
+        val externalDir = context.getExternalFilesDir(null) ?: return false
+        if (currentModelName == modelOption.fileName && KofuNativeEngine.isNativeReady()) {
+            KofuNativeEngine.nativeUnloadModel()
+            if (isOllamaConnected && backendMode != BackendMode.LOCAL_CPP) {
+                activeBackend = InferenceBackend.OLLAMA_SERVER
+                isModelLoaded = true
+                currentModelName = "$ollamaModel (Ollama)"
+            } else {
+                isModelLoaded = false
+                activeBackend = InferenceBackend.NONE
+                activeHardwareTier = "NONE"
+                currentModelName = ""
+            }
+        }
+        val finalFile = File(externalDir, modelOption.fileName)
+        val partFile = File(externalDir, "${modelOption.fileName}.part")
+        var deleted = false
+        if (finalFile.exists()) deleted = finalFile.delete() || deleted
+        if (partFile.exists()) deleted = partFile.delete() || deleted
+        return deleted
     }
 
     fun switchModel(
         context: Context,
         modelOption: ModelOption,
-        scope: CoroutineScope,
+        scope: CoroutineScope = repositoryScope,
         onNeedsDownload: () -> Unit
     ) {
         selectedModel = modelOption
+        savePreferences(context)
         val file = getLocalModelFile(context, modelOption)
         if (file != null) {
             loadModel(context, Uri.fromFile(file), scope)
@@ -577,7 +947,7 @@ object LlamaRepository {
         if (localFile.exists() && localFile.length() >= getExpectedMinSize(modelOption)) {
             onProgress(1f)
             onComplete(Uri.fromFile(localFile))
-            loadModel(context, Uri.fromFile(localFile), CoroutineScope(Dispatchers.Main))
+            loadModel(context, Uri.fromFile(localFile), repositoryScope)
             return
         }
 
@@ -587,7 +957,7 @@ object LlamaRepository {
         isDownloadingModel = true
         isDownloadPaused = false
 
-        com.kofu.assistant.service.ModelDownloadService.startDownload(
+        ModelDownloadService.startDownload(
             context = context,
             url = modelOption.downloadUrl,
             fileName = modelOption.fileName,
@@ -595,40 +965,8 @@ object LlamaRepository {
         )
     }
 
-    fun downloadDefaultModel(
-        context: Context,
-        onProgress: (Float) -> Unit = {},
-        onComplete: (Uri) -> Unit = {},
-        onError: (String) -> Unit = {}
-    ) {
-        val externalDir = context.getExternalFilesDir(null)
-        if (externalDir == null) {
-            onError("Almacenamiento externo no disponible")
-            return
-        }
-
-        val selectedFile = getLocalModelFile(context, selectedModel)
-        if (selectedFile != null) {
-            onComplete(Uri.fromFile(selectedFile))
-            loadModel(context, Uri.fromFile(selectedFile), CoroutineScope(Dispatchers.Main))
-            return
-        }
-
-        for (m in AVAILABLE_MODELS) {
-            val local = getLocalModelFile(context, m)
-            if (local != null) {
-                selectedModel = m
-                onComplete(Uri.fromFile(local))
-                loadModel(context, Uri.fromFile(local), CoroutineScope(Dispatchers.Main))
-                return
-            }
-        }
-
-        downloadModel(context, selectedModel, onProgress, onComplete, onError)
-    }
-
     fun pauseDownload(context: Context) {
-        com.kofu.assistant.service.ModelDownloadService.pauseDownload(context)
+        ModelDownloadService.pauseDownload(context)
         isDownloadingModel = false
         isDownloadPaused = true
         val percent = (downloadProgress * 100).toInt()
@@ -639,69 +977,80 @@ object LlamaRepository {
     fun resumeDownload(context: Context) {
         val modelToDownload = AVAILABLE_MODELS.find { it.fileName == currentDownloadingFileName } ?: selectedModel
         selectedModel = modelToDownload
+        savePreferences(context)
         isDownloadingModel = true
         isDownloadPaused = false
         val url = currentDownloadingUrl.ifBlank { modelToDownload.downloadUrl }
         val fileName = currentDownloadingFileName.ifBlank { modelToDownload.fileName }
         val modelName = currentDownloadingModelName.ifBlank { modelToDownload.name }
         downloadStatusText = "Reanudando descarga..."
-        com.kofu.assistant.service.ModelDownloadService.startDownload(context, url, fileName, modelName)
+        ModelDownloadService.startDownload(context, url, fileName, modelName)
     }
 
     fun cancelDownload(context: Context? = null) {
         context?.let { ctx ->
-            com.kofu.assistant.service.ModelDownloadService.cancelDownload(ctx)
+            ModelDownloadService.cancelDownload(ctx)
             val externalDir = ctx.getExternalFilesDir(null)
             if (externalDir != null) {
                 val targetName = currentDownloadingFileName.ifBlank { selectedModel.fileName }
-                val partialFile = File(externalDir, targetName)
-                if (partialFile.exists() && !isModelLoaded) {
-                    partialFile.delete()
+                val partFile = File(externalDir, "$targetName.part")
+                if (partFile.exists()) partFile.delete()
+
+                val expected = getExpectedMinSize(
+                    AVAILABLE_MODELS.find { it.fileName == targetName } ?: selectedModel
+                )
+                val legacyPartial = File(externalDir, targetName)
+                if (legacyPartial.exists() && legacyPartial.length() < expected && !isModelLoaded) {
+                    legacyPartial.delete()
                 }
             }
         }
-        downloadJob?.cancel()
-        downloadJob = null
         isDownloadingModel = false
         isDownloadPaused = false
         downloadProgress = 0f
         downloadStatusText = "Descarga cancelada"
     }
 
-    /**
-     * Inicia automáticamente la comprobación y descarga por defecto del modelo desde Hugging Face
-     * mediante Foreground Service persistente si no existe un modelo local cargado previamente.
-     */
-    fun startAutoDownloadIfNeeded(context: Context, scope: CoroutineScope) {
-        // 1. Si ya hay un modelo cargado en el motor C++, no hacer nada
+    fun startAutoDownloadIfNeeded(context: Context, scope: CoroutineScope = repositoryScope) {
+        appContext = context.applicationContext
+        val selectedFile = getLocalModelFile(context, selectedModel)
+        if (selectedFile != null) {
+            if (!KofuNativeEngine.nativeIsModelLoaded() || currentModelName != selectedFile.name) {
+                Log.i(TAG, "Modelo seleccionado encontrado localmente: ${selectedFile.name}. Cargando...")
+                loadModel(context, Uri.fromFile(selectedFile), scope)
+            }
+            return
+        }
+
         if (KofuNativeEngine.nativeIsModelLoaded()) {
             return
         }
 
-        // 2. Comprobar si el modelo seleccionado ya existe en el almacenamiento
-        val selectedFile = getLocalModelFile(context, selectedModel)
-        if (selectedFile != null) {
-            Log.i(TAG, "Modelo seleccionado encontrado localmente: ${selectedFile.name}. Cargando...")
-            loadModel(context, Uri.fromFile(selectedFile), scope)
-            return
-        }
-
-        // 3. Comprobar si existe cualquier otro modelo oficial localmente
+        // Comprobar si existe cualquier modelo GGUF oficial o importado localmente en externalFilesDir
         for (m in AVAILABLE_MODELS) {
             val local = getLocalModelFile(context, m)
             if (local != null) {
                 selectedModel = m
+                savePreferences(context)
                 Log.i(TAG, "Modelo alternativo encontrado localmente: ${local.name}. Cargando...")
                 loadModel(context, Uri.fromFile(local), scope)
                 return
             }
         }
 
-        // 4. Si ya está descargando o está en pausa por el usuario / red, no reiniciar automáticamente
+        val anyLocalGguf = context.getExternalFilesDir(null)
+            ?.listFiles { f -> f.isFile && f.name.endsWith(".gguf", ignoreCase = true) && f.length() > 10_000_000L }
+            ?.firstOrNull()
+        if (anyLocalGguf != null) {
+            Log.i(TAG, "Modelo local GGUF detectado: ${anyLocalGguf.name}. Cargando offline...")
+            loadModel(context, Uri.fromFile(anyLocalGguf), scope)
+            return
+        }
+
         if (isDownloadingModel || isDownloadPaused) return
 
-        Log.i(TAG, "Iniciando descarga en Foreground Service de ${selectedModel.name} desde Hugging Face...")
-        com.kofu.assistant.service.ModelDownloadService.startDownload(
+        Log.i(TAG, "Iniciando descarga en Foreground Service de ${selectedModel.name}...")
+        ModelDownloadService.startDownload(
             context = context,
             url = selectedModel.downloadUrl,
             fileName = selectedModel.fileName,
@@ -711,72 +1060,6 @@ object LlamaRepository {
 
     fun onDownloadedModelReady(context: Context, targetFile: File) {
         Log.i(TAG, "Modelo descargado por Foreground Service: ${targetFile.name}. Cargando en C++...")
-        loadModel(context, Uri.fromFile(targetFile), CoroutineScope(Dispatchers.Main))
-    }
-
-    private suspend fun tryDownloadFileWithResume(
-        client: OkHttpClient,
-        url: String,
-        targetFile: File,
-        onProgress: (Float) -> Unit
-    ): Boolean {
-        return try {
-            var existingLength = 0L
-            if (targetFile.exists()) {
-                existingLength = targetFile.length()
-            }
-
-            val requestBuilder = Request.Builder().url(url)
-            if (existingLength > 0) {
-                requestBuilder.header("Range", "bytes=$existingLength-")
-            }
-
-            val request = requestBuilder.build()
-            client.newCall(request).execute().use { response ->
-                val code = response.code
-                val isResume = (code == 206)
-                if (code != 200 && code != 206) {
-                    if (code == 416) {
-                        return true
-                    }
-                    return false
-                }
-
-                val body = response.body ?: return false
-                val contentLength = body.contentLength()
-                val totalLength = if (isResume) existingLength + contentLength else contentLength
-
-                val append = isResume
-                var downloaded = if (isResume) existingLength else 0L
-
-                val inputStream = body.byteStream()
-                val outputStream = FileOutputStream(targetFile, append)
-                val buffer = ByteArray(16 * 1024)
-                var read: Int
-                var lastProgressTime = System.currentTimeMillis()
-
-                outputStream.use { out ->
-                    inputStream.use { inp ->
-                        while (inp.read(buffer).also { read = it } != -1) {
-                            out.write(buffer, 0, read)
-                            downloaded += read
-
-                            val currentTime = System.currentTimeMillis()
-                            if (currentTime - lastProgressTime > 250 || downloaded == totalLength) {
-                                val progress = if (totalLength > 0) downloaded.toFloat() / totalLength else 0f
-                                withContext(Dispatchers.Main) {
-                                    onProgress(progress)
-                                }
-                                lastProgressTime = currentTime
-                            }
-                        }
-                    }
-                }
-                true
-            }
-        } catch (e: Exception) {
-            Log.w(TAG, "Error descargando con reanudación $url: ${e.message}")
-            false
-        }
+        loadModel(context, Uri.fromFile(targetFile), repositoryScope)
     }
 }

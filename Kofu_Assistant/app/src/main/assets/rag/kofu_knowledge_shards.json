@@ -1,0 +1,334 @@
+{
+  "version": "1.0.0",
+  "language": "es",
+  "shards": {
+    "CS_PROGRAMMING": [
+      {
+        "id": "cs_01",
+        "title": "Punteros y referencias en C++20",
+        "keywords": "c++ punteros referencias memoria nullptr unique_ptr shared_ptr raii",
+        "content": "En C++20 un puntero almacena una dirección de memoria y puede ser nullptr o reasignarse, mientras una referencia es un alias no nulo vinculado al inicializar. Prefiere std::unique_ptr y std::shared_ptr (RAII) sobre new/delete manual para evitar fugas y dangling pointers."
+      },
+      {
+        "id": "cs_02",
+        "title": "Modelo de memoria y move semantics en C++",
+        "keywords": "c++ move rvalue lvalue std::move copy elision stack heap",
+        "content": "La memoria stack es automática y rápida (LIFO); el heap es dinámico y gestionado por el programa. std::move convierte un lvalue en rvalue reference (T&&) permitiendo transferir recursos O(1) sin copias profundas."
+      },
+      {
+        "id": "cs_03",
+        "title": "Concurrencia y Mutex en C++20",
+        "keywords": "c++ std::mutex lock_guard atomic concurrencia deadlock race condition",
+        "content": "Usa std::lock_guard o std::scoped_lock para evitar deadlocks al bloquear múltiples mutexes. Para banderas y contadores simples utiliza std::atomic<T> lock-free con memory_order adecuado."
+      },
+      {
+        "id": "cs_04",
+        "title": "Kotlin Coroutines y Dispatchers",
+        "keywords": "kotlin coroutines dispatchers io main default suspend flow stateflow",
+        "content": "Las corrutinas en Kotlin permiten concurrencia estructurada sin bloquear hilos. Usa Dispatchers.Main para UI, Dispatchers.IO para disco/red, Dispatchers.Default para CPU intensiva y SupervisorJob para aislar fallos entre corrutinas hijas."
+      },
+      {
+        "id": "cs_05",
+        "title": "Flow, callbackFlow y StateFlow en Kotlin",
+        "keywords": "kotlin flow callbackflow stateflow sharedflow streaming collect",
+        "content": "Flow es un flujo frío secuencial; callbackFlow adapta APIs basadas en callbacks (como JNI o OkHttp) cerrando recursos con awaitClose. StateFlow mantiene siempre el último estado observable para Jetpack Compose."
+      },
+      {
+        "id": "cs_06",
+        "title": "Complejidad algorítmica Big-O",
+        "keywords": "big-o complejidad algoritmo busqueda binaria quicksort mergesort hash",
+        "content": "Acceso en array/hash promedio: O(1). Búsqueda binaria: O(log n). MergeSort y HeapSort: O(n log n) garantizado. QuickSort: O(n log n) promedio, O(n^2) peor caso. Recorrido de matrices cuadradas: O(n^2)."
+      },
+      {
+        "id": "cs_07",
+        "title": "Estructuras de datos clave",
+        "keywords": "arbol avl b-tree grafo bfs dfs pila cola heap tabla hash",
+        "content": "Pila (LIFO) y Cola (FIFO) operan en O(1). Heap binario permite extraer mínimo/máximo en O(log n). B-Tree optimiza índices en disco/SQLite. BFS usa cola (camino mínimo sin pesos) y DFS usa pila/recursión."
+      },
+      {
+        "id": "cs_08",
+        "title": "Android NDK, JNI y fdsan",
+        "keywords": "android ndk jni GetStringUTFChars DeleteLocalRef fdsan file descriptor",
+        "content": "En JNI verifica siempre nullptr tras GetStringUTFChars, libera referencias locales en bucles con DeleteLocalRef y asigna un único dueño a cada File Descriptor (fd) para evitar SIGABRT por doble cierre de fdsan en Android 10+."
+      },
+      {
+        "id": "cs_09",
+        "title": "Alineación de páginas de 16 KB en Android 15+",
+        "keywords": "android 15 16kb page size elf max-page-size cmake ndk",
+        "content": "Android 15+ en dispositivos ARM64 modernos soporta páginas de 16 KB. Las librerías nativas .so deben enlazarse con -Wl,-z,max-page-size=16384 en CMake y NDK r26+ para cargar correctamente."
+      },
+      {
+        "id": "cs_10",
+        "title": "Python: GIL, generadores y recursión",
+        "keywords": "python gil generador yield decorador fibonacci memoizacion lru_cache",
+        "content": "En Python el GIL serializa bytecode en un hilo por proceso (usa multiprocessing para CPU). Los generadores (yield) producen valores perezosos O(1) en RAM. Para Fibonacci recursivo usa @functools.lru_cache o iteración O(n)."
+      },
+      {
+        "id": "cs_11",
+        "title": "SQLite FTS4 y transacciones ACID",
+        "keywords": "sqlite fts4 indice invertido acid transacciones wal atomic",
+        "content": "SQLite garantiza ACID (Atomicidad, Consistencia, Aislamiento, Durabilidad). Agrupar inserciones en una transacción explícita (BEGIN...COMMIT) acelera cientos de veces la escritura. FTS4 indexa texto completo en milisegundos."
+      },
+      {
+        "id": "cs_12",
+        "title": "Linux POSIX mmap y /proc",
+        "keywords": "linux posix mmap munmap proc meminfo statm page cache",
+        "content": "mmap mapea archivos en el espacio virtual del proceso bajo demanda (zero-copy) usando el page cache del kernel. /proc/meminfo expone MemAvailable (RAM realmente disponible) y /proc/self/statm reporta páginas residentes RSS."
+      },
+      {
+        "id": "cs_13",
+        "title": "Redes TCP, UDP, HTTP/2 y TLS",
+        "keywords": "tcp udp http https tls puerto handshake dns",
+        "content": "TCP ofrece transporte fiable orientado a conexión (handshake 3 vías); UDP prioriza baja latencia sin garantías de entrega. TLS cifra la capa de transporte sobre TCP; HTTP/2 multiplexa múltiples flujos sobre una sola conexión."
+      },
+      {
+        "id": "cs_14",
+        "title": "Jetpack Compose y recomposición",
+        "keywords": "jetpack compose remember derivedstateof lazycolumn recomposicion estado",
+        "content": "En Jetpack Compose usa remember y derivedStateOf para evitar recomposiciones innecesarias; asigna claves estables (key = { it.id }) en LazyColumn y evita operaciones de E/S en el hilo principal."
+      },
+      {
+        "id": "cs_15",
+        "title": "Git: rebase, merge, cherry-pick y reset",
+        "keywords": "git merge rebase cherry-pick reset revert commit rama",
+        "content": "git merge preserva el historial de ramas mediante commit de unión; git rebase reescribe la base linealmente; git cherry-pick aplica un commit puntual; git revert deshace cambios con un nuevo commit seguro para ramas compartidas."
+      },
+      {
+        "id": "cs_16",
+        "title": "Seguridad: sanitización y Path Traversal",
+        "keywords": "seguridad path traversal canonicalpath xss sql injection sanitizacion",
+        "content": "Para prevenir Path Traversal valida siempre canonicalPath.startsWith(baseDir.canonicalPath). En SQL usa sentencias parametrizadas (?); en prompts LLM neutraliza tokens de control del sistema antes de formatear turnos."
+      },
+      {
+        "id": "cs_17",
+        "title": "Patrones de diseño de software",
+        "keywords": "patrones singleton factory observer strategy repository solid",
+        "content": "SOLID: Responsabilidad Única, Abierto/Cerrado, Sustitución de Liskov, Segregación de Interfaces e Inversión de Dependencias. Repository desacopla fuentes de datos (C++/SQLite) de la UI."
+      },
+      {
+        "id": "cs_18",
+        "title": "Sistemas Operativos: procesos, hilos y deadlocks",
+        "keywords": "sistema operativo proceso hilo deadlock coffman sched_setaffinity",
+        "content": "Los hilos comparten espacio de direcciones dentro de un proceso. Un deadlock requiere 4 condiciones de Coffman: exclusión mutua, retención y espera, no expropiación y espera circular. sched_setaffinity fija hilos a núcleos CPU específicos."
+      }
+    ],
+    "MATH_SCIENCE": [
+      {
+        "id": "ms_01",
+        "title": "Constantes físicas fundamentales (SI)",
+        "keywords": "velocidad luz planck boltzmann avogadro gravitacion constante fisica",
+        "content": "Velocidad de la luz c = 299,792,458 m/s. Constante de Planck h = 6.62607015e-34 J*s. Número de Avogadro NA = 6.02214076e23 mol^-1. Gravedad estándar g = 9.80665 m/s^2. Constante gravitacional G = 6.67430e-11 N*m^2/kg^2."
+      },
+      {
+        "id": "ms_02",
+        "title": "Leyes de Newton y mecánica clásica",
+        "keywords": "newton fuerza masa aceleracion inercia accion reaccion cinetica",
+        "content": "1ª Ley: un cuerpo mantiene su reposo o MRU sin fuerza neta. 2ª Ley: F = m * a (o dp/dt). 3ª Ley: toda acción genera una reacción igual y opuesta. Energía cinética Ec = 1/2 m*v^2; potencial Ep = m*g*h."
+      },
+      {
+        "id": "ms_03",
+        "title": "Leyes de la Termodinámica",
+        "keywords": "termodinamica entropia energia calor entalpia cero primera segunda tercera",
+        "content": "Ley Cero: equilibrio térmico transitivo. 1ª Ley: conservación de energía (dU = dQ - dW). 2ª Ley: la entropía de un sistema aislado nunca disminuye (dS >= 0). 3ª Ley: al acercarse a 0 K la entropía tiende a un mínimo constante."
+      },
+      {
+        "id": "ms_04",
+        "title": "Electromagnetismo: Ley de Ohm y ecuaciones de Maxwell",
+        "keywords": "ohm voltaje corriente resistencia potencia maxwell electromagnetismo",
+        "content": "Ley de Ohm: V = I * R; potencia eléctrica P = V * I = I^2 * R. Las 4 ecuaciones de Maxwell unifican electricidad y magnetismo (Gauss eléctrico, Gauss magnético sin monopolos, Faraday-Lenz e inductancia, Ampère-Maxwell)."
+      },
+      {
+        "id": "ms_05",
+        "title": "Cálculo diferencial e integral básico",
+        "keywords": "derivada integral calculo teorema fundamental limite euler exponencial",
+        "content": "Derivada de x^n es n*x^(n-1); de sin(x) es cos(x); de cos(x) es -sin(x); de e^x es e^x; de ln(x) es 1/x. Integral de x^n dx = x^(n+1)/(n+1) + C (n != -1). Teorema Fundamental conecta derivación e integración."
+      },
+      {
+        "id": "ms_06",
+        "title": "Álgebra lineal: matrices, vectores y producto punto",
+        "keywords": "algebra lineal matriz vector producto punto determinante eigenvalor",
+        "content": "El producto punto a·b = sum(ai*bi) = |a||b|cos(theta) mide similitud angular (base de embeddings y atención Transformer). Una matriz cuadrada es invertible si y solo si su determinante es distinto de cero."
+      },
+      {
+        "id": "ms_07",
+        "title": "Ecuación cuadrática y logaritmos",
+        "keywords": "ecuacion cuadratica formula general discriminante logaritmo teorema pitagoras",
+        "content": "Para ax^2 + bx + c = 0, x = (-b ± sqrt(b^2 - 4ac)) / (2a). Pitágoras en triángulo rectángulo: a^2 + b^2 = c^2. Propiedad de logaritmos: log(A*B) = log(A) + log(B); cambio de base: log_b(x) = ln(x)/ln(b)."
+      },
+      {
+        "id": "ms_08",
+        "title": "Probabilidad, estadística y Teorema de Bayes",
+        "keywords": "probabilidad bayes media varianza desviacion estandar distribucion normal",
+        "content": "Teorema de Bayes: P(A|B) = P(B|A)*P(A) / P(B). La varianza es el promedio de desviaciones cuadráticas respecto a la media; la desviación estándar es su raíz cuadrada. En una distribución normal, ~68.27% de los datos caen dentro de ±1 sigma."
+      },
+      {
+        "id": "ms_09",
+        "title": "Química: tabla periódica, pH y enlaces",
+        "keywords": "quimica atomo proton electron ph acido base enlace covalente ionico agua",
+        "content": "El número atómico Z equivale al número de protones. Escala de pH = -log10[H+]: pH < 7 ácido, pH = 7 neutro (agua pura a 25°C), pH > 7 básico. Enlace iónico transfiere electrones; covalente los comparte."
+      },
+      {
+        "id": "ms_10",
+        "title": "Biología celular, ADN y fotosíntesis",
+        "keywords": "biologia adn arn mitocondria atp celula fotosintesis mitosis meiosis",
+        "content": "El ADN usa bases A-T y C-G en doble hélice; el ARN sustituye timina por uracilo (U). Las mitocondrias sintetizan ATP mediante respiración celular. La fotosíntesis convierte CO2 + H2O + luz en glucosa y O2 en cloroplastos."
+      },
+      {
+        "id": "ms_11",
+        "title": "Astronomía y sistema solar",
+        "keywords": "sistema solar planeta tierra luna sol distancia unidad astronomica",
+        "content": "La Tierra orbita el Sol a 1 Unidad Astronómica (~149.6 millones de km); la luz solar tarda ~8 minutos y 20 segundos en llegar. Los 8 planetas en orden: Mercurio, Venus, Tierra, Marte, Júpiter, Saturno, Urano y Neptuno."
+      },
+      {
+        "id": "ms_12",
+        "title": "Números primos y sucesión de Fibonacci",
+        "keywords": "primo fibonacci numero aureo e pi divisibilidad",
+        "content": "Un número primo mayor que 1 solo es divisible por 1 y sí mismo (el 2 es el único primo par). Pi ≈ 3.14159265; número de Euler e ≈ 2.7182818; razón áurea phi ≈ 1.6180339. Fibonacci: F(n)=F(n-1)+F(n-2), F(0)=0, F(1)=1."
+      },
+      {
+        "id": "ms_13",
+        "title": "Geometría: áreas y volúmenes",
+        "keywords": "area volumen circulo esfera cilindro triangulo cono perimetro",
+        "content": "Círculo: A = pi*r^2, P = 2*pi*r. Esfera: V = (4/3)*pi*r^3, A = 4*pi*r^2. Cilindro: V = pi*r^2*h. Cono: V = (1/3)*pi*r^2*h. Triángulo: A = (base*altura)/2."
+      }
+    ],
+    "AI_EDGE": [
+      {
+        "id": "ai_01",
+        "title": "Arquitectura Qualcomm Snapdragon ARMv8 para IA Edge",
+        "keywords": "snapdragon armv8 kryo adreno hexagon npu gpu cpu dotprod fp16",
+        "content": "Los SoC Snapdragon ARMv8 combinan CPU Kryo big.LITTLE/Prime (ARMv8.2-A con NEON, DotProd asimddp y FP16), GPU Adreno (OpenCL/Vulkan) y NPU Hexagon (HTP/HVX/VTCM). Kofu orquesta fallback dinámico NPU -> GPU -> CPU."
+      },
+      {
+        "id": "ai_02",
+        "title": "Módulos llama.cpp y ggml en Edge",
+        "keywords": "llama.cpp ggml gguf mmap zero-copy kv cache context shifting iswa",
+        "content": "llama.cpp carga archivos GGUF mediante mmap zero-copy sin duplicar pesos en heap. En modelos Gemma con Sliding Window Attention (ISWA), Context Shifting requiere swa_full=true y llama_memory_seq_rm/add."
+      },
+      {
+        "id": "ai_03",
+        "title": "Cuantización Q4_K_M, Q4_0 y Q8_0",
+        "keywords": "cuantizacion q4_k_m q4_0 q8_0 bits pesos memoria repack kleidiai",
+        "content": "La cuantización a 4 bits (Q4_K_M) reduce ~4x la RAM respecto a FP16 preservando alta precisión de razonamiento (~1.6 GB para 2B parámetros). GGML_CPU_REPACK reempaqueta Q4_0/Q4_K en tiempo de carga para instrucciones DotProd."
+      },
+      {
+        "id": "ai_04",
+        "title": "Latencia TTFT, tokens/s y KV Cache Prefix Reuse",
+        "keywords": "ttft tokens por segundo kv cache prefill decode velocidad latencia",
+        "content": "TTFT (Time To First Token) mide el prefill del prompt; tokens/s mide la decodificación autoregresiva limitada por ancho de banda de RAM. Reutilizar el prefijo del KV cache evita recalcular turnos previos y acelera 5x-10x el TTFT."
+      },
+      {
+        "id": "ai_05",
+        "title": "RAG (Retrieval-Augmented Generation) offline",
+        "keywords": "rag retrieval sqlite fts4 bm25 contexto alucinaciones grounding",
+        "content": "RAG complementa al LLM finetuneado recuperando hechos verificados de bases locales SQLite FTS4 antes de generar. Mantener el contexto recuperado compacto (~120 tokens) reduce alucinaciones sin degradar la velocidad de prefill."
+      },
+      {
+        "id": "ai_06",
+        "title": "Reducción de alucinaciones y muestreo (Samplers)",
+        "keywords": "alucinacion temperatura top_p top_k repeat_penalty greedy sampler",
+        "content": "Temperaturas bajas (0.0 a 0.35) y repeat_penalty > 1.0 reducen invenciones y bucles repetitivos en tareas factuales. En consultas sin evidencia verificada el modelo debe admitir incertidumbre en vez de inventar cifras o citas."
+      },
+      {
+        "id": "ai_07",
+        "title": "Protección antidesborde de memoria en Android",
+        "keywords": "oom memoria memavailable lmk ontrimmemory n_ctx context shifting",
+        "content": "En móviles Android con 6-8 GB RAM el Low Memory Killer (LMK) cierra procesos si MemAvailable cae demasiado. Adaptar n_ctx según /proc/meminfo, aplicar Context Shifting y responder a onTrimMemory previene OOM crashes."
+      },
+      {
+        "id": "ai_08",
+        "title": "Plantillas de chat Gemma, Gemma 4 y ChatML",
+        "keywords": "gemma start_of_turn end_of_turn chatml im_start prompt injection",
+        "content": "Gemma 1/2 requiere estrictamente alternancia <start_of_turn>user y <start_of_turn>model comenzando por user. Gemma 4 usa <|turn>user / <turn|>. Sanitizar tokens de control impide prompt injection."
+      },
+      {
+        "id": "ai_09",
+        "title": "Transformers y mecanismo de Self-Attention",
+        "keywords": "transformer atencion qkv flash attention softmax tokenizacion bpe",
+        "content": "La auto-atención calcula softmax(Q*K^T / sqrt(dk)) * V. FlashAttention fusiona operaciones en memoria rápida reduciendo complejidad espacial de O(N^2) a O(N) y evitando saturar el bus de memoria móvil."
+      }
+    ],
+    "GENERAL_FACTS_ES": [
+      {
+        "id": "gf_01",
+        "title": "Geografía: continentes, océanos y puntos clave",
+        "keywords": "geografia continentes oceanos rio amazonas nilo everest capitales",
+        "content": "La Tierra tiene 5 océanos (Pacífico el mayor, Atlántico, Índico, Antártico y Ártico). Monte Everest: 8,848.86 m. Ríos más largos: Nilo (~6,650 km) y Amazonas (~6,400-7,000 km, mayor caudal del mundo)."
+      },
+      {
+        "id": "gf_02",
+        "title": "Capitales de países hispanohablantes y potencias",
+        "keywords": "capital mexico madrid bogota buenos aires lima santiago tokyo paris washington",
+        "content": "Capitales: México -> Ciudad de México; España -> Madrid; Colombia -> Bogotá; Argentina -> Buenos Aires; Perú -> Lima; Chile -> Santiago; Brasil -> Brasilia; EE.UU. -> Washington D. C.; Japón -> Tokio; Francia -> París."
+      },
+      {
+        "id": "gf_03",
+        "title": "Historia universal: hitos clave",
+        "keywords": "historia imprenta revolucion industrial guerra mundial luna internet",
+        "content": "Imprenta de Gutenberg (~1440). Revolución Francesa (1789). 1ª Guerra Mundial (1914-1918); 2ª Guerra Mundial (1939-1945). Llegada del Apolo 11 a la Luna (20 de julio de 1969). Creación de la World Wide Web por Tim Berners-Lee (1989)."
+      },
+      {
+        "id": "gf_04",
+        "title": "Historia de América Latina y México",
+        "keywords": "historia mexico independencia revolucion tenochtitlan colon america",
+        "content": "Llegada de Colón a América: 12 de octubre de 1492. Caída de México-Tenochtitlan: 1521. Inicio de Independencia de México: 16 de septiembre de 1810 (consumada en 1821). Revolución Mexicana: inició el 20 de noviembre de 1910."
+      },
+      {
+        "id": "gf_05",
+        "title": "Salud básica y signos vitales humanos",
+        "keywords": "salud signos vitales temperatura presion arterial frecuencia cardiaca primeros auxilios",
+        "content": "Valores adultos normales en reposo: temperatura corporal ~36.5-37.2 °C, frecuencia cardíaca 60-100 lpm, presión arterial óptima ~120/80 mmHg, saturación SpO2 95-100%. Ante emergencias médicas contacta siempre servicios médicos profesionales."
+      },
+      {
+        "id": "gf_06",
+        "title": "Literatura e idioma español",
+        "keywords": "literatura cervantes quijote garcia marquez borges rae gramatica",
+        "content": "Don Quijote de la Mancha fue escrito por Miguel de Cervantes (1605 y 1615). Cien años de soledad es obra de Gabriel García Márquez (Nobel 1982). Las palabras agudas llevan tilde si terminan en n, s o vocal."
+      },
+      {
+        "id": "gf_07",
+        "title": "Economía y finanzas personales básicas",
+        "keywords": "economia inflacion pib interes compuesto presupuesto ahorro",
+        "content": "El PIB mide el valor de bienes y servicios finales producidos en un país. La inflación es el aumento sostenido del nivel general de precios. Interés compuesto: M = C * (1 + r)^t."
+      },
+      {
+        "id": "gf_08",
+        "title": "Derechos humanos y privacidad digital",
+        "keywords": "derechos humanos privacidad proteccion datos onu constitucion",
+        "content": "La Declaración Universal de los Derechos Humanos fue adoptada por la ONU en 1948. La privacidad y protección de datos personales garantizan el control ciudadano sobre su información frente a terceros."
+      },
+      {
+        "id": "gf_09",
+        "title": "Nutrición y grupos alimenticios",
+        "keywords": "nutricion proteinas carbohidratos lipidos vitaminas agua hidratacion",
+        "content": "Macronutrientes esenciales: carbohidratos (~4 kcal/g), proteínas (~4 kcal/g) y lípidos/grasas (~9 kcal/g), además de vitaminas, minerales, fibra y agua."
+      },
+      {
+        "id": "gf_10",
+        "title": "Unidades y conversiones cotidianas",
+        "keywords": "conversion kilometro milla celsius fahrenheit kilogramo libra litro",
+        "content": "1 milla = 1.60934 km. 1 pulgada = 2.54 cm. 1 kg = 2.20462 lb. °F = (°C * 9/5) + 32. 1 litro de agua pura equivale aproximadamente a 1 kg a 4 °C."
+      }
+    ],
+    "KOFU_SYSTEM": [
+      {
+        "id": "kf_01",
+        "title": "Identidad y autonomía 100% offline de Kofu",
+        "keywords": "kofu quien eres offline modo avion privacidad datos internet servidor",
+        "content": "Kofu Mobile es un asistente de IA Edge diseñado para operar 100% de forma autónoma y privada dentro del teléfono Android sin internet, sin cuentas y sin enviar conversaciones a la nube. Funciona completamente en Modo Avión."
+      },
+      {
+        "id": "kf_02",
+        "title": "Capacidades técnicas locales de Kofu",
+        "keywords": "kofu motor llama.cpp gguf rag sqlite npu gpu cpu memoria",
+        "content": "Kofu ejecuta modelos GGUF locales en C++20 optimizado para Snapdragon ARMv8 con fallback NPU -> GPU -> CPU, complementado por bases RAG SQLite FTS4 offline, Context Shifting y guardia antidesborde de RAM."
+      },
+      {
+        "id": "kf_03",
+        "title": "Política de veracidad y límites de Kofu",
+        "keywords": "kofu no sabes inventar alucinar limite tiempo real clima noticias hoy",
+        "content": "Cuando opera offline, Kofu no tiene acceso en tiempo real a internet, clima actual, bolsa ni noticias de hoy. Si un dato no está en su contexto verificado ni en su entrenamiento confiable, debe indicarlo honestamente sin inventar."
+      }
+    ]
+  }
+}

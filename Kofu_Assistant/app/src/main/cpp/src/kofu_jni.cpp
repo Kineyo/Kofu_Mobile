@@ -37,6 +37,7 @@ Java_com_kofu_assistant_repository_KofuNativeEngine_nativeLoadModel(
     if (j_model_path == nullptr) return JNI_FALSE;
 
     const char* path_chars = env->GetStringUTFChars(j_model_path, nullptr);
+    if (path_chars == nullptr) return JNI_FALSE;
     std::string path(path_chars);
     env->ReleaseStringUTFChars(j_model_path, path_chars);
 
@@ -55,8 +56,10 @@ Java_com_kofu_assistant_repository_KofuNativeEngine_nativeLoadModelFd(
     std::string name = "imported_model.gguf";
     if (j_name != nullptr) {
         const char* name_chars = env->GetStringUTFChars(j_name, nullptr);
-        name = std::string(name_chars);
-        env->ReleaseStringUTFChars(j_name, name_chars);
+        if (name_chars != nullptr) {
+            name = std::string(name_chars);
+            env->ReleaseStringUTFChars(j_name, name_chars);
+        }
     }
 
     bool success = kofu::KofuEngine::instance().load_model_fd(
@@ -211,6 +214,33 @@ Java_com_kofu_assistant_repository_KofuNativeEngine_nativeCancelGeneration(
     kofu::KofuEngine::instance().cancel_generation();
 }
 
+JNIEXPORT void JNICALL
+Java_com_kofu_assistant_repository_KofuNativeEngine_nativeSetGenerationConfig(
+    JNIEnv* env,
+    jobject /*thiz*/,
+    jfloat j_temperature,
+    jfloat j_top_p,
+    jfloat j_repeat_penalty,
+    jint j_max_tokens,
+    jstring j_system_prompt
+) {
+    kofu::GenerationConfig cfg;
+    cfg.temperature = static_cast<float>(j_temperature);
+    cfg.top_p = static_cast<float>(j_top_p);
+    cfg.repeat_penalty = static_cast<float>(j_repeat_penalty);
+    cfg.max_tokens = static_cast<int32_t>(j_max_tokens);
+
+    if (j_system_prompt != nullptr) {
+        const char* sys_chars = env->GetStringUTFChars(j_system_prompt, nullptr);
+        if (sys_chars != nullptr) {
+            cfg.system_prompt = std::string(sys_chars);
+            env->ReleaseStringUTFChars(j_system_prompt, sys_chars);
+        }
+    }
+
+    kofu::KofuEngine::instance().set_generation_config(cfg);
+}
+
 JNIEXPORT jstring JNICALL
 Java_com_kofu_assistant_repository_KofuNativeEngine_nativeGetStatsJson(
     JNIEnv* env,
@@ -218,6 +248,32 @@ Java_com_kofu_assistant_repository_KofuNativeEngine_nativeGetStatsJson(
 ) {
     std::string stats = kofu::KofuEngine::instance().get_stats_json();
     return env->NewStringUTF(stats.c_str());
+}
+
+JNIEXPORT void JNICALL
+Java_com_kofu_assistant_repository_KofuNativeEngine_nativeTrimMemory(
+    JNIEnv* /*env*/,
+    jobject /*thiz*/
+) {
+    kofu::KofuEngine::instance().trim_memory();
+}
+
+JNIEXPORT jstring JNICALL
+Java_com_kofu_assistant_repository_KofuNativeEngine_nativeGetActiveHardwareTier(
+    JNIEnv* env,
+    jobject /*thiz*/
+) {
+    std::string tier = kofu::KofuEngine::instance().get_active_hardware_tier();
+    return env->NewStringUTF(tier.c_str());
+}
+
+JNIEXPORT void JNICALL
+Java_com_kofu_assistant_repository_KofuNativeEngine_nativeSetPreferredAccelerator(
+    JNIEnv* /*env*/,
+    jobject /*thiz*/,
+    jint mode
+) {
+    kofu::KofuEngine::instance().set_preferred_accelerator(static_cast<int>(mode));
 }
 
 } // extern "C"

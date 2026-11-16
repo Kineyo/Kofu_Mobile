@@ -38,5 +38,15 @@ object KofuNativeEngine {
         callback: NativeStreamCallback
     )
     external fun nativeCancelGeneration()
+    external fun nativeSetGenerationConfig(
+        temperature: Float,
+        topP: Float,
+        repeatPenalty: Float,
+        maxTokens: Int,
+        systemPrompt: String
+    )
     external fun nativeGetStatsJson(): String
+    external fun nativeTrimMemory()
+    external fun nativeGetActiveHardwareTier(): String
+    external fun nativeSetPreferredAccelerator(mode: Int)
 }
