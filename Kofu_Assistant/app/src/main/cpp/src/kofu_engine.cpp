@@ -253,9 +253,11 @@ llama_context* KofuEngine::init_context_with_fallback(llama_model* model, Hardwa
         // En SoCs gama media/entrada 2+6, usar hasta 4 hilos para saturar ancho de banda LPDDR4X
         optimal_threads = static_cast<int32_t>(std::min<unsigned int>(max_threads_cap, std::max(2u, hardware_threads / 2)));
     }
-    // Prefill paralelo: usar hasta todos los núcleos físicos disponibles (máx 8) para bajar TTFT
+    // Prefill paralelo: en SoCs gama baja / homogéneos (Serie A Exynos 850 / Helio G35) limitar a 4 hilos
+    // para evitar starvation de UI y picos térmicos; en gama media/alta escalar hasta 8 hilos.
+    const unsigned int batch_cap = (low_ram && perf_core_ids_.empty()) ? 4u : 8u;
     const int32_t batch_threads = (hardware_threads > 0)
-        ? static_cast<int32_t>(std::min<unsigned int>(8u, std::max<unsigned int>(static_cast<unsigned int>(optimal_threads), hardware_threads)))
+        ? static_cast<int32_t>(std::min<unsigned int>(batch_cap, std::max<unsigned int>(static_cast<unsigned int>(optimal_threads), hardware_threads)))
         : optimal_threads;
 
     const size_t avail_mb = get_available_ram_mb();
@@ -296,11 +298,18 @@ llama_context* KofuEngine::init_context_with_fallback(llama_model* model, Hardwa
         const char* label;
     };
     const std::vector<KvTypePair> kv_attempts = quantize_kv
-        ? std::vector<KvTypePair>{
-            {GGML_TYPE_Q8_0, GGML_TYPE_Q8_0, "Q8_0/Q8_0"},
-            {GGML_TYPE_Q8_0, GGML_TYPE_F16,  "Q8_0/F16"},
-            {GGML_TYPE_F16,  GGML_TYPE_F16,  "F16/F16"}
-        }
+        ? (avail_mb < 700
+            ? std::vector<KvTypePair>{
+                {GGML_TYPE_Q4_0, GGML_TYPE_Q4_0, "Q4_0/Q4_0"},
+                {GGML_TYPE_Q8_0, GGML_TYPE_Q8_0, "Q8_0/Q8_0"},
+                {GGML_TYPE_Q8_0, GGML_TYPE_F16,  "Q8_0/F16"},
+                {GGML_TYPE_F16,  GGML_TYPE_F16,  "F16/F16"}
+            }
+            : std::vector<KvTypePair>{
+                {GGML_TYPE_Q8_0, GGML_TYPE_Q8_0, "Q8_0/Q8_0"},
+                {GGML_TYPE_Q8_0, GGML_TYPE_F16,  "Q8_0/F16"},
+                {GGML_TYPE_F16,  GGML_TYPE_F16,  "F16/F16"}
+            })
         : std::vector<KvTypePair>{
             {GGML_TYPE_F16,  GGML_TYPE_F16,  "F16/F16"}
         };
@@ -370,6 +379,7 @@ llama_context* KofuEngine::init_context_with_fallback(llama_model* model, Hardwa
 }
 
 bool KofuEngine::initialize_with_hardware_fallback(const std::string& source_path, const std::string& display_name) {
+    const auto load_t0 = std::chrono::steady_clock::now();
     // Clasificar dispositivos ggml registrados en tiempo de ejecución
     std::vector<ggml_backend_dev_t> npu_devs;
     std::vector<ggml_backend_dev_t> gpu_devs;
@@ -478,33 +488,73 @@ bool KofuEngine::initialize_with_hardware_fallback(const std::string& source_pat
         LOGI("Modelo cargado en Tier %s (%s): %s",
              tier_to_cstr(tier), soc_model_.c_str(), display_name.c_str());
         warmup_system_prompt_locked();
+        const double load_ms = std::chrono::duration<double, std::milli>(
+            std::chrono::steady_clock::now() - load_t0
+        ).count();
+        {
+            std::lock_guard<std::mutex> s_lock(stats_mutex_);
+            last_stats_.load_ms = load_ms;
+            last_stats_.memory_rss_mb = get_process_rss_mb();
+            last_stats_.anon_rss_mb = get_process_anon_rss_mb();
+            last_stats_.available_ram_mb = get_available_ram_mb();
+        }
+        LOGI("Carga completa | model=%s | load_ms=%.0f | rss=%zu MB | anon=%zu MB | availRAM=%zu MB",
+             display_name.c_str(), load_ms, last_stats_.memory_rss_mb, last_stats_.anon_rss_mb, last_stats_.available_ram_mb);
         return true;
     }
 
     return false;
 }
 
+namespace {
+std::pair<PromptStyle, std::string> resolve_prompt_style_and_system(
+    const std::string& model_name,
+    const std::string& raw_system_prompt
+) {
+    std::string lower_name = model_name;
+    std::transform(lower_name.begin(), lower_name.end(), lower_name.begin(), ::tolower);
+
+    // En dev-test (100% MIT, 0% Gemma por defecto), ChatML es el estilo predeterminado para Kaze y Aura
+    PromptStyle style = PromptStyle::CHATML;
+    if (lower_name.find("gemma4") != std::string::npos || lower_name.find("gemma-4") != std::string::npos) {
+        style = PromptStyle::GEMMA_4;
+    } else if (lower_name.find("gemma") != std::string::npos) {
+        style = PromptStyle::GEMMA;
+    } else if (lower_name.find("llama3") != std::string::npos || lower_name.find("llama-3") != std::string::npos) {
+        style = PromptStyle::LLAMA3;
+    } else if (lower_name.find("kaze") != std::string::npos ||
+               lower_name.find("aura") != std::string::npos ||
+               lower_name.find("chatml") != std::string::npos ||
+               lower_name.find("qwen") != std::string::npos ||
+               lower_name.find("smol") != std::string::npos ||
+               lower_name.find("lfm") != std::string::npos) {
+        style = PromptStyle::CHATML;
+    }
+
+    std::string effective_sys = raw_system_prompt;
+    if (!effective_sys.empty() &&
+        lower_name.find("qwen3") != std::string::npos &&
+        effective_sys.find("/no_think") == std::string::npos &&
+        effective_sys.find("/think") == std::string::npos) {
+        effective_sys += "\n/no_think";
+    }
+    return {style, effective_sys};
+}
+} // namespace
+
 void KofuEngine::warmup_system_prompt_locked() {
     if (!lmodel_ || !lctx_) return;
     std::string sys_prompt;
-    std::string lower_name;
+    std::string current_name;
     {
         std::lock_guard<std::mutex> s_lock(stats_mutex_);
         sys_prompt = gen_config_.system_prompt;
-        lower_name = model_name_;
+        current_name = model_name_;
     }
     if (sys_prompt.empty()) return;
-    std::transform(lower_name.begin(), lower_name.end(), lower_name.begin(), ::tolower);
-    PromptStyle prompt_style = PromptStyle::GEMMA;
-    if (lower_name.find("gemma4") != std::string::npos || lower_name.find("gemma-4") != std::string::npos) {
-        prompt_style = PromptStyle::GEMMA_4;
-    } else if (lower_name.find("chatml") != std::string::npos ||
-               lower_name.find("qwen") != std::string::npos ||
-               lower_name.find("smol") != std::string::npos) {
-        prompt_style = PromptStyle::CHATML;
-    }
+    const auto [prompt_style, effective_sys] = resolve_prompt_style_and_system(current_name, sys_prompt);
 
-    const std::string sys_only = build_system_prefix(sys_prompt, prompt_style);
+    const std::string sys_only = build_system_prefix(effective_sys, prompt_style);
     if (sys_only.empty()) return;
     const llama_vocab* vocab = llama_model_get_vocab(lmodel_);
     if (!vocab) return;
@@ -565,6 +615,7 @@ void KofuEngine::unload_model_locked() {
     if (loader_) {
         loader_->unload();
     }
+    moe_pager_.detach();
     {
         std::lock_guard<std::mutex> s_lock(stats_mutex_);
         loaded_path_.clear();
@@ -590,8 +641,12 @@ bool KofuEngine::load_model(const std::string& filepath) {
         return false;
     }
 
+    // Adjuntar paginador jerárquico UFS MoE (Hot/Warm/Cold) sobre el archivo en almacenamiento interno
+    moe_pager_.attach_model_file(filepath, 240);
+
     if (!initialize_with_hardware_fallback(filepath, loader_->get_metadata().filename)) {
         LOGE("Fallo en todos los tiers de hardware (NPU->GPU->CPU) para %s", filepath.c_str());
+        moe_pager_.detach();
         loader_->unload();
         return false;
     }
@@ -662,9 +717,10 @@ void KofuEngine::set_low_ram_budget(bool enabled, size_t max_rss_mb, bool debug_
 }
 
 void KofuEngine::trim_memory(int level) {
-    // Niveles moderados/bajos/UI oculta (5, 10, 20): liberar solo micro-embedder sin interrumpir generación
+    // Niveles moderados/bajos/UI oculta (5, 10, 20): liberar embedder y recortar caché Warm MoE
     unload_embed_model();
     const bool is_critical_trim = (level == 15) || (level >= 40);
+    moe_pager_.trim_warm_cache(is_critical_trim ? 0.0 : 0.5);
     if (!is_critical_trim) {
         LOGI("MemoryGuard: trim_memory nivel=%d, embedder liberado; generación activa preservada (RAM disp: %zu MB)",
              level, get_available_ram_mb());
@@ -941,6 +997,98 @@ void KofuEngine::set_generation_config(const GenerationConfig& config) {
     }
 }
 
+namespace {
+
+size_t suffix_prefix_overlap(const std::string& text, const std::string& tag) {
+    const size_t max_check = std::min(text.size(), tag.empty() ? 0 : tag.size() - 1);
+    for (size_t len = max_check; len > 0; --len) {
+        if (text.compare(text.size() - len, len, tag, 0, len) == 0) {
+            return len;
+        }
+    }
+    return 0;
+}
+
+class ThinkTagStreamFilter {
+public:
+    template <typename EmitFn>
+    void push(const std::string& valid_utf8, EmitFn&& emit) {
+        buffer_ += valid_utf8;
+        process(false, std::forward<EmitFn>(emit));
+    }
+
+    template <typename EmitFn>
+    void finish(EmitFn&& emit) {
+        process(true, std::forward<EmitFn>(emit));
+    }
+
+private:
+    static constexpr const char* kOpenTag = "<think>";
+    static constexpr const char* kCloseTag = "</think>";
+    std::string buffer_;
+    bool in_think_{false};
+    bool trim_leading_ws_{false};
+
+    template <typename EmitFn>
+    void emit_clean(std::string chunk, EmitFn&& emit) {
+        if (trim_leading_ws_) {
+            const size_t first = chunk.find_first_not_of(" \t\r\n");
+            if (first == std::string::npos) return;
+            chunk.erase(0, first);
+            trim_leading_ws_ = false;
+        }
+        if (!chunk.empty()) emit(chunk);
+    }
+
+    template <typename EmitFn>
+    void process(bool flush, EmitFn&& emit) {
+        const std::string open_tag(kOpenTag);
+        const std::string close_tag(kCloseTag);
+        while (!buffer_.empty()) {
+            if (!in_think_) {
+                const size_t pos = buffer_.find(open_tag);
+                if (pos != std::string::npos) {
+                    if (pos > 0) emit_clean(buffer_.substr(0, pos), emit);
+                    buffer_.erase(0, pos + open_tag.size());
+                    in_think_ = true;
+                    continue;
+                }
+                if (flush) {
+                    emit_clean(std::move(buffer_), emit);
+                    buffer_.clear();
+                    break;
+                }
+                const size_t keep = suffix_prefix_overlap(buffer_, open_tag);
+                const size_t emit_len = buffer_.size() - keep;
+                if (emit_len > 0) {
+                    emit_clean(buffer_.substr(0, emit_len), emit);
+                    buffer_.erase(0, emit_len);
+                }
+                break;
+            } else {
+                const size_t pos = buffer_.find(close_tag);
+                if (pos != std::string::npos) {
+                    buffer_.erase(0, pos + close_tag.size());
+                    in_think_ = false;
+                    trim_leading_ws_ = true;
+                    continue;
+                }
+                if (flush) {
+                    buffer_.clear();
+                    break;
+                }
+                const size_t keep = suffix_prefix_overlap(buffer_, close_tag);
+                if (buffer_.size() > keep) {
+                    buffer_.erase(0, buffer_.size() - keep);
+                }
+                break;
+            }
+        }
+    }
+};
+
+}  // namespace
+
 void KofuEngine::generate_stream(
     const std::string& prompt,
     const std::function<void(const std::string&)>& token_callback
@@ -975,21 +1123,12 @@ void KofuEngine::generate_stream_history(
         current_name = model_name_;
     }
 
-    // 1. Determinar plantilla según el nombre del modelo
-    PromptStyle prompt_style = PromptStyle::GEMMA;
-    std::string lower_name = current_name;
-    std::transform(lower_name.begin(), lower_name.end(), lower_name.begin(), ::tolower);
-    if (lower_name.find("gemma4") != std::string::npos || lower_name.find("gemma-4") != std::string::npos) {
-        prompt_style = PromptStyle::GEMMA_4;
-    } else if (lower_name.find("chatml") != std::string::npos ||
-               lower_name.find("qwen") != std::string::npos ||
-               lower_name.find("smol") != std::string::npos) {
-        prompt_style = PromptStyle::CHATML;
-    }
+    // 1. Determinar plantilla según el nombre del modelo (Gemma / Gemma-4 / ChatML incl. Qwen y LFM2)
+    const auto [prompt_style, effective_sys] = resolve_prompt_style_and_system(current_name, cfg.system_prompt);
 
     std::string formatted_prompt = PromptFormatter::format_multi_turn_prompt(
         history,
-        cfg.system_prompt,
+        effective_sys,
         prompt_style
     );
 
@@ -1038,8 +1177,8 @@ void KofuEngine::generate_stream_history(
 
     // Calcular tokens del prefijo del System Prompt para anclar n_keep en poda y Context Shifting
     size_t system_prefix_tokens = 16;
-    if (!cfg.system_prompt.empty()) {
-        const std::string sys_only = build_system_prefix(cfg.system_prompt, prompt_style);
+    if (!effective_sys.empty()) {
+        const std::string sys_only = build_system_prefix(effective_sys, prompt_style);
         if (!sys_only.empty()) {
             std::vector<llama_token> sys_toks(sys_only.size() + 16);
             int32_t n_sys = llama_tokenize(
@@ -1210,19 +1349,21 @@ void KofuEngine::generate_stream_history(
     bool low_ram_triggered = false;
 
     std::string utf8_accumulator;
+    ThinkTagStreamFilter think_filter;
     auto emit_utf8_safe = [&](const std::string& piece, bool flush = false) {
         utf8_accumulator += piece;
         if (flush) {
             if (!utf8_accumulator.empty()) {
-                token_callback(utf8_accumulator);
+                think_filter.push(utf8_accumulator, token_callback);
                 utf8_accumulator.clear();
             }
+            think_filter.finish(token_callback);
             return;
         }
         size_t incomplete = count_incomplete_utf8_trailing_bytes(utf8_accumulator);
         if (incomplete < utf8_accumulator.length()) {
             size_t valid_len = utf8_accumulator.length() - incomplete;
-            token_callback(utf8_accumulator.substr(0, valid_len));
+            think_filter.push(utf8_accumulator.substr(0, valid_len), token_callback);
             utf8_accumulator.erase(0, valid_len);
         }
     };
@@ -1236,13 +1377,20 @@ void KofuEngine::generate_stream_history(
             break;
         }
 
-        // LMK Circuit Breaker + Gobernador Debug 70-80% cada 8 tokens (o cada token si está frenando)
-        if (token_count > 0 && ((token_count % 8 == 0) || throttle_delay_ms > 0)) {
+        // LMK Circuit Breaker + Gobernador Térmico/RAM cada 8 tokens (activo en Debug y Release)
+        if (token_count > 0 && ((token_count % 8 == 0) || throttle_delay_ms > 0 || thermal_throttle_ms_.load() > 0)) {
             const size_t min_safe_ram = strict_budget ? 150 : 120;
-            const size_t max_safe_anon_mb = strict_budget ? 650 : 950;
+            const size_t max_safe_anon_mb = strict_budget
+                ? std::max<size_t>(300, std::min<size_t>(650, max_rss_budget / 2))
+                : 950;
             size_t avail_mb = get_available_ram_mb();
             size_t anon_mb = get_process_anon_rss_mb();
             size_t rss_mb = get_process_rss_mb();
+
+            const uint32_t thm_delay = moe_pager_.apply_thermal_and_ram_guard(
+                thermal_status_.load(), rss_mb, max_rss_budget
+            );
+            thermal_throttle_ms_.store(thm_delay);
 
             if (debug_governor) {
                 if (rss_mb >= hard_80_rss_mb || avail_mb < 220) {
@@ -1356,8 +1504,12 @@ void KofuEngine::generate_stream_history(
 
         kv_cache_tokens_.push_back(new_token_id);
 
-        if (debug_governor && throttle_delay_ms > 0) {
-            std::this_thread::sleep_for(std::chrono::milliseconds(throttle_delay_ms));
+        const uint32_t effective_throttle_ms = std::max<uint32_t>(
+            debug_governor ? static_cast<uint32_t>(throttle_delay_ms) : 0u,
+            thermal_throttle_ms_.load()
+        );
+        if (effective_throttle_ms > 0) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(effective_throttle_ms));
         }
     }
 
@@ -1404,6 +1556,27 @@ void KofuEngine::cancel_generation() {
     is_cancelled_.store(true);
 }
 
+double KofuEngine::probe_ufs_storage(const std::string& app_files_dir) {
+    return moe_pager_.probe_storage_bandwidth_mbps(app_files_dir);
+}
+
+void KofuEngine::configure_moe_pager(size_t warm_budget_mb, size_t total_ram_mb, bool force_ufs_mode) {
+    moe_pager_.configure(warm_budget_mb, total_ram_mb, force_ufs_mode);
+}
+
+uint32_t KofuEngine::update_thermal_status(int android_thermal_status) {
+    thermal_status_.store(android_thermal_status);
+    const size_t rss_mb = get_process_rss_mb();
+    const size_t max_rss = max_rss_budget_mb_.load();
+    const uint32_t delay = moe_pager_.apply_thermal_and_ram_guard(android_thermal_status, rss_mb, max_rss);
+    thermal_throttle_ms_.store(delay);
+    return delay;
+}
+
+std::string KofuEngine::get_moe_pager_stats_json() const {
+    return moe_pager_.get_stats_json();
+}
+
 std::string KofuEngine::get_stats_json() const {
     std::lock_guard<std::mutex> lock(stats_mutex_);
     std::ostringstream ss;
@@ -1413,6 +1586,7 @@ std::string KofuEngine::get_stats_json() const {
        << "\"tokens_per_sec\":" << last_stats_.tokens_per_second << ","
        << "\"decode_tokens_per_sec\":" << last_stats_.decode_tokens_per_second << ","
        << "\"prefill_ms\":" << last_stats_.prefill_ms << ","
+       << "\"load_ms\":" << last_stats_.load_ms << ","
        << "\"memory_rss_mb\":" << last_stats_.memory_rss_mb << ","
        << "\"anon_rss_mb\":" << last_stats_.anon_rss_mb << ","
        << "\"available_ram_mb\":" << (last_stats_.available_ram_mb > 0 ? last_stats_.available_ram_mb : get_available_ram_mb()) << ","
@@ -1422,7 +1596,8 @@ std::string KofuEngine::get_stats_json() const {
        << "\"silicon_tier\":\"" << KOFU_SILICON_TIER_STR << "\","
        << "\"isa_arch\":\"" << KOFU_ARM_ARCH_STR << "\","
        << "\"soc_model\":\"" << last_stats_.soc_model << "\","
-       << "\"backend\":\"" << last_stats_.backend_name << "\""
+       << "\"backend\":\"" << last_stats_.backend_name << "\","
+       << "\"moe_pager\":" << moe_pager_.get_stats_json()
        << "}";
     return ss.str();
 }

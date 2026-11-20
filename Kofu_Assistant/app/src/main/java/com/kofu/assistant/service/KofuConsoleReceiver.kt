@@ -34,6 +34,7 @@ class KofuConsoleReceiver : BroadcastReceiver() {
 
         private val consoleScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
         private val consoleQueueMutex = Mutex()
+        private val consoleHistory = mutableListOf<TurnMessage>()
     }
 
     override fun onReceive(context: Context, intent: Intent) {
@@ -71,6 +72,7 @@ class KofuConsoleReceiver : BroadcastReceiver() {
                         return@launch
                     }
                     LlamaRepository.loadPreferences(appCtx)
+                    synchronized(consoleHistory) { consoleHistory.clear() }
                     val ok = LlamaRepository.loadModelFromPathSync(appCtx, modelPath)
                     Log.i(
                         TAG,
@@ -82,6 +84,7 @@ class KofuConsoleReceiver : BroadcastReceiver() {
             ACTION_CONSOLE_PROMPT -> {
                 val prompt = intent.getStringExtra("prompt")?.trim() ?: ""
                 val maxTok = intent.getIntExtra("max_tokens", 128)
+                val keepHistory = intent.getBooleanExtra("keep_history", false)
                 pendingResult.finish()
                 consoleScope.launch {
                     if (prompt.isBlank()) {
@@ -89,20 +92,29 @@ class KofuConsoleReceiver : BroadcastReceiver() {
                         return@launch
                     }
                     consoleQueueMutex.withLock {
-                        Log.i(TAG, "PROMPT_START | max_tokens=$maxTok | prompt=\"$prompt\"")
+                        Log.i(TAG, "PROMPT_START | max_tokens=$maxTok | keep_history=$keepHistory | prompt=\"$prompt\"")
                         LlamaRepository.loadPreferences(appCtx)
                         KofuRagDatabase.getInstance(appCtx)
+
+                        val turnsToSend = synchronized(consoleHistory) {
+                            if (!keepHistory) consoleHistory.clear()
+                            consoleHistory.add(TurnMessage("user", prompt))
+                            consoleHistory.toList()
+                        }
 
                         val sb = StringBuilder()
                         val t0 = System.currentTimeMillis()
                         LlamaRepository.generateChatStream(
-                            history = listOf(TurnMessage("user", prompt)),
+                            history = turnsToSend,
                             maxTokensOverride = maxTok
                         ).collect { chunk ->
                             sb.append(chunk)
                         }
                         val elapsed = System.currentTimeMillis() - t0
                         val response = sb.toString().trim()
+                        synchronized(consoleHistory) {
+                            consoleHistory.add(TurnMessage("model", response))
+                        }
 
                         // Persistir conversación de consola en caché
                         val sessions = ChatCacheManager.loadSessions(appCtx)
@@ -115,7 +127,7 @@ class KofuConsoleReceiver : BroadcastReceiver() {
                         val m = LlamaRepository.debugMetrics
                         Log.i(
                             TAG,
-                            "PROMPT_RESULT | elapsed=${elapsed}ms | tier=${m.hardwareTier} | rag=${m.activeRagDomain}(${m.ragLookupMs}ms) | tok=${m.tokensGenerated} | tps=${"%.2f".format(m.tokensPerSec)} | availRAM=${m.availableRamMb}MB | rss=${m.memoryRssMb}MB | prompt=\"$prompt\" | response=\"$response\""
+                            "PROMPT_RESULT | elapsed=${elapsed}ms | ttft=${m.latencyFirstTokenMs}ms | tier=${m.hardwareTier} | rag=${m.activeRagDomain}(${m.ragLookupMs}ms) | tok=${m.tokensGenerated} | tps=${"%.2f".format(m.tokensPerSec)} | availRAM=${m.availableRamMb}MB | rss=${m.memoryRssMb}MB | anon=${m.anonRssMb}MB | stats=${LlamaRepository.lastBenchmarkStats} | prompt=\"$prompt\" | response=\"$response\""
                         )
                     }
                 }

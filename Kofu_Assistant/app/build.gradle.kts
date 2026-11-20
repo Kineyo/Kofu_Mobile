@@ -10,10 +10,12 @@ android {
 
     defaultConfig {
         applicationId = "com.kofu.assistant"
+        applicationIdSuffix = ".devtest"
         minSdk = 26
         targetSdk = 34
-        versionCode = 4
-        versionName = "2.1.5"
+        versionCode = 5
+        versionName = "2.2.0-devtest-beta"
+        buildConfigField("boolean", "IS_EXPERIMENTAL_BETA", "true")
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables {

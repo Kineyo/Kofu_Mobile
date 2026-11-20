@@ -282,14 +282,14 @@
       {
         "id": "gf_06",
         "title": "Literatura e idioma español",
-        "keywords": "literatura cervantes quijote garcia marquez borges rae gramatica",
-        "content": "Don Quijote de la Mancha fue escrito por Miguel de Cervantes (1605 y 1615). Cien años de soledad es obra de Gabriel García Márquez (Nobel 1982). Las palabras agudas llevan tilde si terminan en n, s o vocal."
+        "keywords": "literatura cervantes quijote garcia marquez borges rae",
+        "content": "Don Quijote de la Mancha fue escrito por Miguel de Cervantes (1605 y 1615). Cien años de soledad es obra de Gabriel García Márquez (Nobel 1982)."
       },
       {
         "id": "gf_11",
-        "title": "Reglas de acentuación en español",
+        "title": "Acentuación español",
         "keywords": "espanol acentuacion tilde agudas graves llanas esdrujulas sobreesdrujulas ortografia",
-        "content": "Agudas (sílaba tónica al final): tilde si terminan en n, s o vocal (ej. canción). Graves/llanas (penúltima): tilde si NO terminan en n, s ni vocal (ej. árbol). Esdrújulas y sobreesdrújulas llevan tilde siempre (ej. música)."
+        "content": "Agudas: n, s o vocal (canción). Graves: NO n, s ni vocal (árbol). Esdrújulas y sobreesdrújulas: siempre llevan tilde (música)."
       },
       {
         "id": "gf_12",

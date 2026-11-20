@@ -162,7 +162,7 @@ std::string PromptFormatter::format_multi_turn_prompt(
             }
         }
         ss << "<|turn>model\n";
-    } else if (style == PromptStyle::GEMMA || style == PromptStyle::AUTO) {
+    } else if (style == PromptStyle::GEMMA) {
         bool first_user = true;
         for (const auto& t : normalized) {
             if (t.role == "user") {
@@ -177,7 +177,7 @@ std::string PromptFormatter::format_multi_turn_prompt(
             }
         }
         ss << "<start_of_turn>model\n";
-    } else if (style == PromptStyle::CHATML) {
+    } else if (style == PromptStyle::CHATML || style == PromptStyle::AUTO) {
         if (!system_msg.empty()) {
             ss << "<|im_start|>system\n" << system_msg << "<|im_end|>\n";
         }

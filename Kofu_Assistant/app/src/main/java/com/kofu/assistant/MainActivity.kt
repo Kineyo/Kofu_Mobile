@@ -7,6 +7,7 @@ import android.content.Context
 import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Bundle
+import android.os.PowerManager
 import android.view.WindowManager
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -77,6 +78,8 @@ class MainActivity : ComponentActivity() {
 
         val repository = LlamaRepository
         repository.loadPreferences(this)
+        repository.probeUfsAndConfigurePager(applicationContext)
+        registerThermalGuardListener()
 
         // Pre-indexar base RAG offline SQLite FTS4 + BM25 y micro-embedder GGUF en segundo plano
         lifecycleScope.launch(Dispatchers.IO) {
@@ -112,6 +115,35 @@ class MainActivity : ComponentActivity() {
                 )
             }
         }
+    }
+
+    private var thermalListener: Any? = null
+
+    private fun registerThermalGuardListener() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) return
+        val pm = getSystemService(Context.POWER_SERVICE) as? PowerManager ?: return
+        if (KofuNativeEngine.isNativeReady()) {
+            KofuNativeEngine.nativeUpdateThermalStatus(pm.currentThermalStatus)
+        }
+        val listener = PowerManager.OnThermalStatusChangedListener { status ->
+            if (KofuNativeEngine.isNativeReady()) {
+                KofuNativeEngine.nativeUpdateThermalStatus(status)
+            }
+        }
+        pm.addThermalStatusListener(listener)
+        thermalListener = listener
+    }
+
+    override fun onDestroy() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            val pm = getSystemService(Context.POWER_SERVICE) as? PowerManager
+            val listener = thermalListener as? PowerManager.OnThermalStatusChangedListener
+            if (pm != null && listener != null) {
+                pm.removeThermalStatusListener(listener)
+            }
+        }
+        thermalListener = null
+        super.onDestroy()
     }
 
     override fun onTrimMemory(level: Int) {

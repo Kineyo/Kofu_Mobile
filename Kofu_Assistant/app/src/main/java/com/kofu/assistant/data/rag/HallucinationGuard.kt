@@ -86,11 +86,20 @@ object HallucinationGuard {
         )
     }
 
+    private val THINK_BLOCK_REGEX = Regex("<think>[\\s\\S]*?</think>\\s*", RegexOption.IGNORE_CASE)
+    private val UNCLOSED_THINK_REGEX = Regex("<think>[\\s\\S]*$", RegexOption.IGNORE_CASE)
+
+    fun stripThinkTags(rawResponse: String): String {
+        if (!rawResponse.contains("<think", ignoreCase = true)) return rawResponse
+        val noBlocks = THINK_BLOCK_REGEX.replace(rawResponse, "")
+        return UNCLOSED_THINK_REGEX.replace(noBlocks, "").trimStart('\n', '\r', ' ')
+    }
+
     /**
      * Detecta y recorta bucles degenerados de repetición excesiva de líneas o frases.
      */
     fun sanitizeAndValidateResponse(rawResponse: String): String {
-        val trimmed = rawResponse.trim()
+        val trimmed = stripThinkTags(rawResponse).trim()
         if (trimmed.isEmpty()) return trimmed
 
         val lines = trimmed.lines()

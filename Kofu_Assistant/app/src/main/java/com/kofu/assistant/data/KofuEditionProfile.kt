@@ -28,60 +28,84 @@ enum class SiliconEdition(
 ) {
     NODE_7NM_LEGACY(
         code = "7NM_LEGACY",
-        editionTitle = "Aura (7nm Edge)",
-        badgeLabel = "7nm • <=2GB Guard",
+        editionTitle = "Aura-Kaze Beta (7nm Edge)",
+        badgeLabel = "7nm • MIT UFS/eMMC",
         androidRange = "Android 5.0–7.x",
-        aiTaskFocus = "Gemma 3 1B 4-bit, RAG Escolar y Respuesta Rápida Offline",
+        aiTaskFocus = "Aura-Kaze-Go 1.1B Podado (100% MIT, <=3 GB / eMMC) y RAG Escolar Offline",
         isaTarget = "ARMv8.0-A NEON Universal (Sin DotProd/i8mm)",
-        defaultModelId = "kofu-go-1b",
+        defaultModelId = "kaze-aura-go-1.1b",
         defaultMaxTokens = 256,
         defaultTemperature = 0.50f,
         maxRagChunks = 1,
         maxRagContextChars = 180,
         maxInMemoryMessages = 100,
-        defaultSystemPrompt = "Eres Aura, asistente educativa y conversacional 100% offline en español. Nunca necesitas internet ni servidores externos."
+        defaultSystemPrompt = "Tu nombre es Aura. Eres una asistente educativa y conversacional 100% offline en español basada en Kaze (licencia MIT). El usuario es una persona distinta a ti: nunca llames Aura al usuario ni digas que no tienes nombre propio."
     ),
     NODE_5NM_MAINSTREAM(
         code = "5NM_MAINSTREAM",
-        editionTitle = "Aura (5nm Edge)",
-        badgeLabel = "5nm • API 26–35",
+        editionTitle = "Aura-Kaze Beta (5nm UFS MoE)",
+        badgeLabel = "5nm • UFS Hot/Warm/Cold",
         androidRange = "Android 8.0–15.0",
-        aiTaskFocus = "Programación, Matemáticas, Español y Asistencia Escolar Offline",
+        aiTaskFocus = "Kaze-4.7B-A530M (Streaming UFS Hot/Warm/Cold, 100% MIT) + Programación, Matemáticas y Español",
         isaTarget = "ARMv8.2-A NEON + DotProd + FP16 (Kryo Prime/Perf)",
-        defaultModelId = "kofu-go-1b",
+        defaultModelId = "kaze-4.7b-a530m",
         defaultMaxTokens = 640,
         defaultTemperature = 0.35f,
         maxRagChunks = 2,
         maxRagContextChars = 360,
         maxInMemoryMessages = 150,
-        defaultSystemPrompt = "Eres Aura, asistente educativa local experta en programación, matemáticas, español y ciencias. Responde con claridad en español."
+        defaultSystemPrompt = "Tu nombre es Aura. Eres una asistente educativa 100% offline basada en Kaze-4.7B-A530M (licencia MIT), experta en programación, matemáticas y español. El usuario es una persona distinta a ti: nunca llames Aura al usuario ni digas que no tienes nombre propio. Responde paso a paso con claridad."
     ),
     FRONTIER_SUB5NM(
         code = "FRONTIER_SUB5NM",
-        editionTitle = "Aura Frontier (<5nm)",
-        badgeLabel = "<5nm • API 36+",
-        androidRange = "Android 16+ Frontera",
-        aiTaskFocus = "Razonamiento Profundo, Ciencia Avanzada y Contexto Extendido",
+        editionTitle = "Kaze Frontier Beta (<5nm)",
+        badgeLabel = "<5nm • Kaze 4.7B Full",
+        androidRange = "Android 14+ Frontera",
+        aiTaskFocus = "Kaze-4.7B-A530M Base (31 Expertos MoE, 100% MIT) + Razonamiento y Ciencia Avanzada",
         isaTarget = "ARMv8.6-A / ARMv9 DotProd + FP16 + i8mm Matrix",
-        defaultModelId = "kofu-gemma4",
+        defaultModelId = "kaze-4.7b-a530m",
         defaultMaxTokens = 2048,
         defaultTemperature = 0.45f,
         maxRagChunks = 3,
         maxRagContextChars = 720,
         maxInMemoryMessages = 400,
-        defaultSystemPrompt = "Eres Aura (Edición Frontier). Tu especialidad es razonamiento lógico profundo, ciencias, matemáticas y programación paso a paso en español."
+        defaultSystemPrompt = "Tu nombre es Aura (Edición Kaze Frontier 100% MIT). El usuario es una persona distinta a ti: nunca lo llames Aura. Tu especialidad es razonamiento lógico profundo, ciencias, matemáticas y programación paso a paso en español."
     );
 }
 
 object KofuEditionProfile {
     const val STRICT_2GB_PROCESS_RSS_MB = 1850L
+    const val ULTRA_TIGHT_3GB_THRESHOLD_MB = 3400L
     const val LOW_RAM_DEVICE_THRESHOLD_MB = 6144L
+    const val UFS_FAST_BANDWIDTH_THRESHOLD_MBPS = 600.0
 
     @Volatile
     var deviceTotalRamMb: Long = 0L
         private set
 
+    @Volatile
+    var storageBandwidthMbps: Double = 0.0
+        private set
+
+    val isUfsFastStorage: Boolean
+        get() = storageBandwidthMbps >= UFS_FAST_BANDWIDTH_THRESHOLD_MBPS
+
+    /**
+     * Techo dinámico de VmRSS calibrado para serie Galaxy A (2 GB / 3 GB / 4 GB / 6 GB+ RAM)
+     * para frenar antes de que actúe el Android Low Memory Killer (lmkd).
+     */
+    val effectiveMaxRssBudgetMb: Long
+        get() = when {
+            deviceTotalRamMb in 1L..2400L -> 750L
+            deviceTotalRamMb in 2401L..3400L -> 1150L
+            deviceTotalRamMb in 3401L..4500L -> 1500L
+            else -> STRICT_2GB_PROCESS_RSS_MB
+        }
+
     val current: SiliconEdition by lazy { fromCode(BuildConfig.SILICON_TIER) }
+
+    val isUltraTight3GbDevice: Boolean
+        get() = deviceTotalRamMb in 1L..ULTRA_TIGHT_3GB_THRESHOLD_MB
 
     val isStrict2GbBudgetActive: Boolean
         get() = current == SiliconEdition.NODE_7NM_LEGACY ||
@@ -89,17 +113,49 @@ object KofuEditionProfile {
             current == SiliconEdition.NODE_5NM_MAINSTREAM
 
     val effectiveMaxRagChunks: Int
-        get() = if (isStrict2GbBudgetActive) 1 else current.maxRagChunks
+        get() = when {
+            isUltraTight3GbDevice -> 1
+            isStrict2GbBudgetActive -> minOf(current.maxRagChunks, 2)
+            else -> current.maxRagChunks
+        }
 
     val effectiveMaxRagContextChars: Int
-        get() = if (isStrict2GbBudgetActive) 180 else current.maxRagContextChars
+        get() = when {
+            isUltraTight3GbDevice -> 180
+            isStrict2GbBudgetActive -> minOf(current.maxRagContextChars, 320)
+            else -> current.maxRagContextChars
+        }
 
     val effectiveMaxTokens: Int
-        get() = if (isStrict2GbBudgetActive) minOf(current.defaultMaxTokens, 256) else current.defaultMaxTokens
+        get() = when {
+            isUltraTight3GbDevice -> minOf(current.defaultMaxTokens, 256)
+            isStrict2GbBudgetActive -> minOf(current.defaultMaxTokens, 384)
+            else -> current.defaultMaxTokens
+        }
+
+    /**
+     * Enrutamiento híbrido adaptable (rama dev-test, 100% MIT, 0% Gemma):
+     * - <= 3 GB RAM física o almacenamiento eMMC lento (< 600 MB/s): Aura-Kaze-Go 1.1B podado (~660 MB, residente en RAM).
+     * - 4 GB+ RAM con almacenamiento UFS rápido (>= 600 MB/s) o Frontier: Kaze-4.7B-A530M Base con paginación Hot/Warm/Cold en UFS.
+     */
+    val effectiveDefaultModelId: String
+        get() = when {
+            isUltraTight3GbDevice -> "kaze-aura-go-1.1b"
+            storageBandwidthMbps > 0.0 && !isUfsFastStorage -> "kaze-aura-go-1.1b"
+            storageBandwidthMbps == 0.0 && deviceTotalRamMb in 1L..4500L -> "kaze-aura-go-1.1b"
+            current == SiliconEdition.NODE_7NM_LEGACY && !isUfsFastStorage -> "kaze-aura-go-1.1b"
+            else -> "kaze-4.7b-a530m"
+        }
 
     fun configureForDeviceRam(totalRamBytes: Long) {
         if (totalRamBytes > 0L) {
             deviceTotalRamMb = totalRamBytes / (1024L * 1024L)
+        }
+    }
+
+    fun configureForStorageBandwidth(mbps: Double) {
+        if (mbps > 0.0) {
+            storageBandwidthMbps = mbps
         }
     }
 

@@ -116,8 +116,9 @@ class KofuRagAnd500StressTest {
         val frontier = KofuEditionProfile.fromCode("FRONTIER_SUB5NM")
 
         assertEquals(SiliconEdition.NODE_7NM_LEGACY, legacy)
-        assertEquals("kofu-go-1b", legacy.defaultModelId)
+        assertEquals("kaze-aura-go-1.1b", legacy.defaultModelId)
         assertEquals(SiliconEdition.NODE_5NM_MAINSTREAM, mainstream)
+        assertEquals("kaze-4.7b-a530m", mainstream.defaultModelId)
         assertEquals(SiliconEdition.FRONTIER_SUB5NM, frontier)
 
         assertTrue(legacy.defaultMaxTokens < mainstream.defaultMaxTokens)
@@ -125,11 +126,26 @@ class KofuRagAnd500StressTest {
         assertTrue(legacy.maxRagContextChars < mainstream.maxRagContextChars)
         assertTrue(mainstream.maxRagContextChars < frontier.maxRagContextChars)
 
-        KofuEditionProfile.configureForDeviceRam(4L * 1024L * 1024L * 1024L)
+        // Piso estricto 3 GB RAM (ej. 2.7-3.0 GB físicos): selecciona Aura-Kaze-Go 1.1B podado (100% MIT)
+        KofuEditionProfile.configureForDeviceRam(3L * 1024L * 1024L * 1024L)
+        KofuEditionProfile.configureForStorageBandwidth(220.0) // eMMC lento
+        assertTrue(KofuEditionProfile.isUltraTight3GbDevice)
         assertTrue(KofuEditionProfile.isStrict2GbBudgetActive)
+        assertEquals("kaze-aura-go-1.1b", KofuEditionProfile.effectiveDefaultModelId)
         assertEquals(1, KofuEditionProfile.effectiveMaxRagChunks)
         assertEquals(180, KofuEditionProfile.effectiveMaxRagContextChars)
         assertTrue(KofuEditionProfile.effectiveMaxTokens <= 256)
+
+        // Estándar 4 GB RAM + UFS rápido (>= 600 MB/s): activa Kaze-4.7B-A530M con paginación Hot/Warm/Cold en UFS
+        KofuEditionProfile.configureForDeviceRam(4L * 1024L * 1024L * 1024L)
+        KofuEditionProfile.configureForStorageBandwidth(1400.0) // UFS 3.1
+        assertTrue(!KofuEditionProfile.isUltraTight3GbDevice)
+        assertTrue(KofuEditionProfile.isUfsFastStorage)
+        assertTrue(KofuEditionProfile.isStrict2GbBudgetActive)
+        assertEquals("kaze-4.7b-a530m", KofuEditionProfile.effectiveDefaultModelId)
+        assertTrue(KofuEditionProfile.effectiveMaxRagChunks <= 2)
+        assertTrue(KofuEditionProfile.effectiveMaxRagContextChars <= 320)
+        assertTrue(KofuEditionProfile.effectiveMaxTokens <= 384)
     }
 
     @Test

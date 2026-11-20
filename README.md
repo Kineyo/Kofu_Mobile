@@ -1,180 +1,120 @@
-# Aura [Rama `kofu-go`] 🧠
+# ☢️ Aura-Kaze [Rama Experimental `dev-test`]
 
 <p align="center">
-  <img src="assets/images/aura_logo.png" alt="Aura Logo" width="180" style="border-radius: 28px; box-shadow: 0 10px 30px rgba(0,0,0,0.15);">
+  <img src="assets/images/banner.png" alt="Aura-Kaze dev-test Banner" width="90%">
 </p>
 
 <p align="center">
-  <a href="https://huggingface.co/shebxyd/aura-1b-edge"><img src="https://img.shields.io/badge/🤗%20Aura%201B%20(Gemma%203)-Q4__K__M%20(~769%20MiB)-yellow?style=for-the-badge" alt="Aura 1B Edge Q4_K_M"></a>
-  <img src="https://img.shields.io/badge/Branch-kofu--go%20%5B%3C%3D2GB%20Guard%5D-brightgreen?style=for-the-badge" alt="kofu-go Branch">
-  <img src="https://img.shields.io/badge/Backend-C%2B%2B20%20NDK%20r26-00599C?style=for-the-badge&logo=cplusplus&logoColor=white" alt="C++20 NDK">
-  <img src="https://img.shields.io/badge/UI-Jetpack%20Compose-4285F4?style=for-the-badge&logo=jetpackcompose&logoColor=white" alt="Jetpack Compose">
-  <img src="https://img.shields.io/badge/Android-5.0%2B%20(API%2021%2B)-3DDC84?style=for-the-badge&logo=android&logoColor=white" alt="Android 5.0+">
-  <img src="https://img.shields.io/badge/Inference-GGUF%20%7C%20llama.cpp-FF6F00?style=for-the-badge&logo=cplusplus&logoColor=white" alt="Inference">
-  <img src="https://img.shields.io/badge/Privacy-100%25%20On--Device-10B981?style=for-the-badge&logo=shield&logoColor=white" alt="Privacy">
-  <img src="https://img.shields.io/badge/Architecture-ARM64--v8a-0091BD?style=for-the-badge&logo=arm&logoColor=white" alt="ARM64">
-  <img src="https://img.shields.io/badge/License-MIT-00f5d4?style=for-the-badge&logoColor=black" alt="MIT License">
+  <img src="assets/images/kaze_logo.png" alt="Kaze Logo" width="120">
+</p>
+
+<p align="center">
+  <img src="https://img.shields.io/badge/Branch-dev--test%20%5BBETA%20EXPERIMENTAL%5D-red?style=for-the-badge" alt="dev-test Experimental">
+  <img src="https://img.shields.io/badge/License-100%25%20MIT%20(0%25%20Gemma)-00f5d4?style=for-the-badge" alt="100% MIT">
+  <img src="https://img.shields.io/badge/Engine-C%2B%2B20%20UFS%20MoE%20Pager-FF6F00?style=for-the-badge" alt="UFS MoE Pager">
+  <img src="https://img.shields.io/badge/Brain-Kaze--4.7B--A530M%20%2B%20Aura--Kaze--Go-7C3AED?style=for-the-badge" alt="Kaze MoE">
+  <img src="https://img.shields.io/badge/Android-5.0%2B%20ARM64--v8a-3DDC84?style=for-the-badge" alt="ARM64">
 </p>
 
 ---
 
-## ⚡ ¿Qué es Aura (`kofu-go`)?
-
-**Aura** (desarrollada en la rama Git **`kofu-go`** del proyecto base) es la edición educativa y optimizada diseñada para ejecutarse **100% offline en dispositivos Android de gama de entrada y gama media (3–6 GB de RAM)** manteniendo el presupuesto combinado de **modelo 4-bit + caché KV + bases de datos RAG + runtime Android** estrictamente por debajo de **2 GB** (`LMK Guard` con techo de `VmRSS <= 1850 MB`) para evitar terminaciones por el **Android Low Memory Killer (`lmkd`)**.
-
-A diferencia de clientes conectados a la nube o soluciones con entornos Linux complejos (Termux/PRoot), Aura ejecuta **Google Gemma 3 1B IT (`Q4_K_M`)** directamente sobre `llama.cpp` en C++20/ARM64 con prioridad **GPU → NPU → CPU** junto con un motor RAG híbrido ligero (`SQLite FTS4 + BM25 + embeddings int8`) con identidad de **Aura** y base de conocimientos escolares (programación, matemáticas, ortografía y gramática del español, ciencias naturales e historia), incluso en **Modo Avión**.
+> [!CAUTION]
+> **RAMA EXPERIMENTAL (`dev-test`) — ALTO RIESGO TÉRMICO Y DE I/O**
+> Esta rama es una **beta experimental 100% inflamable** creada para probar el motor híbrido universal de paginación MoE sobre almacenamiento directo **UFS** (inspirado en el patrón *Hot/Warm/Cold* de Colibri, escrito desde cero en C++20 bajo licencia MIT).
+> - Usa `applicationIdSuffix = ".devtest"`, por lo que **se instala aparte** de tu versión estable (`main` / `kofu-go`) sin sobrescribir tus chats.
+> - Incluye un **Gobernador Térmico y de RAM** (*Anti-Chernobyl*) que recorta la caché Warm y aplica enfriamiento por token si sube la temperatura o `VmRSS`.
 
 ---
 
-## 🏛️ Arquitectura Optimizada <= 2 GB: C++20 + Kotlin Compose
+## 🧠 ¿Qué es la rama `dev-test`?
+
+`dev-test` fusiona los 3 perfiles de silicio de `main` (`node7nm`, `node5nm`, `frontierSub5nm`) con el presupuesto estricto `<= 2 GB` y el motor RAG de `kofu-go`, eliminando **el 100% de la dependencia de Google Gemma** y sus términos de uso restrictivos.
+
+En su lugar, adopta la familia propia **100% MIT**:
+1. **Cerebro Base (`Kaze-4.7B-A530M`):** Sparse Mixture-of-Experts (`1 Shared Expert + 31 Routed Experts`, Top-2 activos = `528M` parámetros activos por token).
+2. **Sub-modelo Exprimido (`Aura-Kaze-Go 1.1B`):** Rama podada (*Task-Specific Expert Pruning*, 5–7 expertos) dedicada a teléfonos con `<= 3 GB RAM` o almacenamiento lento **eMMC**.
+
+---
+
+## 🔗 Enlaces a los Cerebros en Hugging Face (100% MIT)
+
+| Modelo | Arquitectura | Cuantización | Peso en Disco | Uso en `dev-test` | Repositorio Hugging Face |
+| :--- | :--- | :--- | :--- | :--- | :--- |
+| **`Kaze-4.7B-A530M` (Base)** | 1 Shared + 31 Routed (Top-2, 528M activos) | `Q4_K_M` | **~2.75 GB** *(en UFS)* | Teléfonos `4–12 GB+` con **UFS rápido (`>= 600 MB/s`)** usando paginación Hot/Warm/Cold (`~1.1 GB RAM`) | [`shebxyd/kaze-4.7b-a530m-edge`](https://huggingface.co/shebxyd/kaze-4.7b-a530m-edge) |
+| **`Aura-Kaze-Go 1.1B` (Podado)** | 1 Shared + 5–7 Routed (Top-2) | `Q4_K_M` / `IQ3_XS` | **~550–660 MB** | Teléfonos **`<= 3 GB RAM`** o almacenamiento **eMMC lento (`< 600 MB/s`)** 100% en RAM/`mmap` | [`shebxyd/aura-kaze-go-edge`](https://huggingface.co/shebxyd/aura-kaze-go-edge) |
+| **Micro-Embedder RAG** | `all-MiniLM-L6-v2` | `Q8_0` | **~24 MB** | Opcional para búsqueda semántica `int8` NEON (respaldo 100% MIT `SQLite FTS4 + BM25` sin embedder) | [`second-state/All-MiniLM-L6-v2-Embedding-GGUF`](https://huggingface.co/second-state/All-MiniLM-L6-v2-Embedding-GGUF) |
+
+---
+
+## 🏛️ Cómo funciona la Arquitectura Híbrida UFS MoE (Hot / Warm / Cold)
+
+En lugar de mandar pesos cuantizados a **ZRAM/Swap** (lo cual falla en Android porque `Q4_K_M` es casi incompresible y termina ocupando la misma RAM física), `dev-test` implementa [`MoeUfsPager`](Kofu_Assistant/app/src/main/cpp/include/moe_ufs_pager.hpp) en C++20 puro:
 
 ```text
-┌──────────────────────────────────────────────────────────────────────┐
-│               CAPA VISUAL Y REACTIVA (Kotlin / Compose)              │
-│  - Jetpack Compose UI con throttling ~80 ms y cacheo de bloques ```  │
-│  - Animación de aparición suave: entrada de burbuja + fade de tokens │
-│  - Detección automática de RAM total (MemTotal <= 6 GB -> <=2GB)     │
-│  - Descarga principal (Foreground Service) + micro-embedder detrás   │
-└──────────────────────────────────┬───────────────────────────────────┘
-                                   │ JNI (Zero-Copy DirectByteBuffer)
-                                   ▼
-┌──────────────────────────────────────────────────────────────────────┐
-│               MOTOR NATIVO C++20 (libkofu_engine.so)                 │
-│  - Zero-Copy mmap real (use_extra_bufts=false bajo <= 2 GB)          │
-│  - KV Cache cuantizada Q8_0/Q8_0 (swa_full=true para Gemma ISWA)     │
-│  - Topología adaptativa para SoCs 2+6 / 4+4 y prefijo KV multi-turno │
-│  - LMK Guard cada 8 tokens (VmRSS <= 1850 MB, RssAnon, MemAvailable) │
-│  - Micro-embedder GGUF + producto punto int8 acelerado por NEON      │
-└──────────────────────────────────────────────────────────────────────┘
+┌─────────────────────────────────────────────────────────────────────────┐
+│             SONDA AUTOMÁTICA AL ARRANCAR (RAM + UFS vs eMMC)            │
+│   nativeProbeUfsStorage(filesDir) -> mide lectura real de 16 MB (MB/s)  │
+└───────────────┬─────────────────────────────────────────┬───────────────┘
+                │ >= 600 MB/s (UFS) & > 3.4 GB RAM        │ < 600 MB/s (eMMC) o <= 3 GB RAM
+                ▼                                         ▼
+┌─────────────────────────────────────────┐  ┌────────────────────────────┐
+│  MODO UFS_HIERARCHICAL (Kaze-4.7B Base) │  │  MODO RAM_RESIDENT_PRUNED  │
+│  ┌───────────────────────────────────┐  │  │  (Aura-Kaze-Go 1.1B ~660MB)│
+│  │ HOT (Fijo en GPU/RAM ~240 MB)     │  │  │  - 5-7 expertos podados    │
+│  │ Embeddings + GQA + Shared Expert  │  │  │  - 100% residente en RAM   │
+│  ├───────────────────────────────────┤  │  │  - Cero cuello de disco    │
+│  │ WARM (Caché LRU en RAM 256-768MB) │  │  │  - Techo VmRSS <= 1850 MB  │
+│  │ ~150-200 expertos más recientes   │  │  └────────────────────────────┘
+│  ├───────────────────────────────────┤  │
+│  │ COLD (Almacenamiento privado UFS) │  │
+│  │ pread() directo + FADV_DONTNEED   │  │
+│  │ (sin inflar Page Cache ni ZRAM)   │  │
+│  └───────────────────────────────────┘  │
+└───────────────────┬─────────────────────┘
+                    ▼
+┌─────────────────────────────────────────────────────────────────────────┐
+│     CASCADA DE HARDWARE (GPU -> NPU -> CPU) + GOBERNADOR TÉRMICO/RAM    │
+│  - nativeUpdateThermalStatus(): encoge Warm LRU y aplica cooling delay  │
+│  - LMK Guard cada 8 tokens (VmRSS <= 1850 MB, KV Cache Q8_0/Q8_0)       │
+│  - RAG Híbrido (SQLite FTS4 + BM25) + HallucinationGuard                │
+└─────────────────────────────────────────────────────────────────────────┘
 ```
 
-### Pilares Implementados en `kofu-go`
-
-1. **Zero-Copy `mmap` Real y Caché KV Cuantizada (`Q8_0`):**
-   - En dispositivos bajo presupuesto `<= 2 GB` (`NODE_7NM_LEGACY` o `MemTotal <= 6144 MB` dentro de esta rama), [`kofu_engine.cpp`](Kofu_Assistant/app/src/main/cpp/src/kofu_engine.cpp) desactiva el weight repacking en memoria anónima (`mparams.use_extra_bufts = false`) para que los pesos `Q4_K_M` (~806 MB) permanezcan en páginas `mmap` limpias y evictables sin inflar `RssAnon`.
-   - La caché KV se configura en **`Q8_0/Q8_0`** (con respaldo automático `Q8_0/F16`) y `n_ctx` adaptativo (`1536 / 1024 / 512`), preservando `swa_full = true` en arquitecturas Gemma/ISWA para mantener *Context Shifting* y reutilización de prefijo KV.
-2. **Cascada GPU → NPU → CPU y Gobernador Debug 70–80 % RAM:**
-   - El motor nativo prioriza descarga parcial/total a **GPU** (OpenCL/Vulkan si el SoC es compatible) y cae automáticamente a **NPU/CPU** con doble pool de hilos (`batch_thr` / `decode_thr`) y precalentamiento del prefijo del sistema en caché KV.
-   - En compilaciones **`debug`** (`BuildConfig.DEBUG`), el gobernador de RAM monitorea `VmRSS` respecto al límite: al superar el **70 %** introduce frenado suave (`25 ms`), al superar el **80 %** frenado fuerte (`75 ms`) y en el techo **100 %** detiene la generación antes de un *kill* del sistema. En **`release`** solo actúa el guarda crítico final.
-   - Verificación *preflight* antes del `prefill` y vigilancia cada **8 tokens** en generación sobre `MemAvailable`, `RssAnon` y `VmRSS` (techo `1850 MB`).
-   - En [`MainActivity.kt`](Kofu_Assistant/app/src/main/java/com/kofu/assistant/MainActivity.kt), `onTrimMemory()` libera el micro-embedder y la caché vectorial en niveles moderados/bajos sin interrumpir la respuesta en curso, reservando la cancelación para niveles críticos.
-3. **RAG Híbrido Ligero + Micro-Embedder Secundario:**
-   - [`KofuRagDatabase.kt`](Kofu_Assistant/app/src/main/java/com/kofu/assistant/data/rag/KofuRagDatabase.kt) combina **SQLite FTS4 + BM25** (omitiendo la reescritura al arrancar cuando coincide el hash en `rag_meta`, con caché SQLite acotada a ~1 MB) y vectores `int8` en **`DirectByteBuffer`** fuera del heap de ART, evaluados desde C++ NEON mediante `nativeScoreInt8CosineDirect` y fusionados con **RRF** (*Reciprocal Rank Fusion*).
-   - [`LlamaRepository.kt`](Kofu_Assistant/app/src/main/java/com/kofu/assistant/repository/LlamaRepository.kt) descarga el micro-embedder `all-MiniLM-L6-v2-Q8_0.gguf` (~24 MB) automáticamente en segundo plano **detrás** de que el modelo principal esté listo, operando con respaldo transparente `BM25-only` si no hay red o si se libera por memoria.
-   - [`HallucinationGuard.kt`](Kofu_Assistant/app/src/main/java/com/kofu/assistant/data/rag/HallucinationGuard.kt) acota temperatura (`<= 0.35f` con RAG) y anexa `[CONTEXTO VERIFICADO]` al final del turno para maximizar la reutilización del prefijo KV.
-4. **UI Fluida con Animación de Aparición:**
-   - [`ChatScreen.kt`](Kofu_Assistant/app/src/main/java/com/kofu/assistant/ui/ChatScreen.kt) aplica throttling de UI (~80 ms), cachea bloques de código ```` ``` ```` ya cerrados para evitar re-evaluar `Regex` en cada token, anima la entrada de nuevas burbujas en GPU (`graphicsLayer`) y usa `StreamingAppearanceText` para conservar sólidas las palabras previas mientras desvanece suavemente (`110 ms`) solo el fragmento recién llegado.
+### Componentes clave añadidos en `dev-test`
+- **[`moe_ufs_pager.hpp`](Kofu_Assistant/app/src/main/cpp/include/moe_ufs_pager.hpp) / [`moe_ufs_pager.cpp`](Kofu_Assistant/app/src/main/cpp/src/moe_ufs_pager.cpp):** Paginador jerárquico Hot/Warm/Cold (O(1) LRU + `pread()` + `posix_fadvise(POSIX_FADV_DONTNEED)` alineado a 16 KB) + sonda de ancho de banda UFS + gobernador térmico/RAM.
+- **[`KofuEditionProfile.kt`](Kofu_Assistant/app/src/main/java/com/kofu/assistant/data/KofuEditionProfile.kt):** Enrutamiento adaptable que combina `deviceTotalRamMb` y `storageBandwidthMbps` para escoger entre `Kaze-4.7B-A530M` y `Aura-Kaze-Go 1.1B`.
+- **[`LlamaRepository.kt`](Kofu_Assistant/app/src/main/java/com/kofu/assistant/repository/LlamaRepository.kt):** Catálogo 100% libre de Google Gemma + inicialización de la sonda UFS en segundo plano (`probeUfsAndConfigurePager`).
+- **[`dev-test-beta.yml`](.github/workflows/dev-test-beta.yml):** Pipeline de GitHub Actions que ejecuta pruebas unitarias y compila automáticamente los 3 sabores (`7nm`, `5nm`, `frontier`) con `SHA256SUMS.txt` y opción de Pre-Release.
 
 ---
 
-## 🤖 Catálogo de Modelos 4-bit en Aura (`kofu-go`)
+## 📱 Requerimientos del Dispositivo
 
-| ID | Modelo | Cuantización | Tamaño | Uso en `kofu-go` |
+| Perfil | RAM Física | Almacenamiento | Modelo Asignado | Android / ISA |
 | :--- | :--- | :--- | :--- | :--- |
-| **`kofu-go-1b`** *(Predeterminado)* | [`shebxyd/aura-1b-edge`](https://huggingface.co/shebxyd/aura-1b-edge) *(base Google Gemma 3 1B IT)* | `Q4_K_M` (4-bit) | **~769 MiB (`806 MB`)** | **Modelo principal Edge** entrenado para Aura (identidad + escolar) bajo umbral <= 2 GB |
-| **`kofu-embed-minilm`** *(Secundario)* | [`second-state/All-MiniLM-L6-v2-Embedding-GGUF`](https://huggingface.co/second-state/All-MiniLM-L6-v2-Embedding-GGUF) | `Q8_0` | **~24 MB** | Micro-embedder descargado detrás del modelo principal para RAG semántico `int8` |
-| **`kofu-v2`** | [`shebxyd/kofu-v2-edge`](https://huggingface.co/shebxyd/kofu-v2-edge) | `Q4_K_M` (4-bit) | ~1.6 GB | Opcional para dispositivos de 6–8 GB+ RAM |
-| **`kofu-2b`** | [`shebxyd/kofu-2b-edge`](https://huggingface.co/shebxyd/kofu-2b-edge) | `Q4_K_M` (4-bit) | ~1.4 GB | Alternativa Gemma 1 2B |
-| **`kofu-gemma4`** | [`shebxyd/kofu-gemma4-edge`](https://huggingface.co/shebxyd/kofu-gemma4-edge) | `Q4_K_M` (4-bit) | ~5.3 GB | Modo Pro Flagship (12 GB+ RAM) |
-
-Además, puedes importar cualquier archivo `.gguf`, `.litertlm`, `.tflite`, `.task` o `.bin` local mediante el botón de selector de modelos o vía consola ADB (`KofuConsoleReceiver`).
+| **Gama Entrada (`node7nm`)** | `3 GB` | eMMC 5.1 (`< 600 MB/s`) o 1.5 GB libres | `Aura-Kaze-Go 1.1B` (`~660 MB`) | Android 5.0+ (`armv8-a`) |
+| **Gama Media UFS (`node5nm`)** | `4–8 GB` | **UFS 2.2 / 3.1 / 4.0** (`>= 600 MB/s`, 4 GB libres) | `Kaze-4.7B-A530M` (Hot/Warm/Cold UFS) | Android 8.0+ (`armv8.2-a+dotprod+fp16`) |
+| **Flagship (`frontierSub5nm`)** | `12 GB+` | **UFS 3.1 / 4.0** (4 GB libres) | `Kaze-4.7B-A530M` Full (`Warm 768 MB+`) | Android 14+ (`armv8.6-a+dotprod+fp16+i8mm`) |
 
 ---
 
-## 📱 Ediciones (`productFlavors`) y Presupuesto de Recursos
+## 🛠️ Compilación Local y GitHub Actions
 
-| Edición (`productFlavor`) | Rango Android | Nodo e ISA ARMv8 | Configuración en rama `kofu-go` |
-| :--- | :--- | :--- | :--- |
-| **`node7nm`** *(Objetivo principal Aura / `kofu-go`)* | Android 5.0+ (API 21+) | `armv8-a` universal (sin DotProd/i8mm) | `Aura 1B (Gemma 3 Q4_K_M)`, `n_ctx <= 1536` (`Q8_0`), `n_batch <= 256`, `1` chunk RAG (`<=280 chars`), `VmRSS <= 1850 MB` |
-| **`node5nm`** *(Mainstream)* | Android 8.0+ (API 26+) | `armv8.2-a+dotprod+fp16` | `Gemma 3 1B Q4_K_M` por defecto en `kofu-go`, presupuesto `<= 2 GB` activo en `MemTotal <= 6 GB`, hasta `640 tok` |
-| **`frontierSub5nm`** *(Frontera)* | Android 14+ (API 34+) | `armv8.6-a+dotprod+fp16+i8mm` | `Kofu 4.0 Pro`, `n_ctx` hasta `4096`, `n_batch=1024`, hasta `6` hilos, máx `2048 tok` |
+### GitHub Actions (Automático en `dev-test` y Manual)
+El workflow [`.github/workflows/dev-test-beta.yml`](.github/workflows/dev-test-beta.yml) se ejecuta en cada `push` a `dev-test` o manualmente desde la pestaña **Actions** (con checkbox opcional para publicar como **GitHub Pre-Release**). Genera 4 APKs firmados + `SHA256SUMS.txt`:
+- `Aura-Kaze-devtest-<sha>-7nm-arm64-release.apk`
+- `Aura-Kaze-devtest-<sha>-5nm-ufs-arm64-release.apk`
+- `Aura-Kaze-devtest-<sha>-5nm-ufs-arm64-debug.apk`
+- `Aura-Kaze-devtest-<sha>-frontier-arm64-release.apk`
 
-En esta rama, [`release.yml`](.github/workflows/release.yml) compila manualmente (`workflow_dispatch`) los APKs `node7nm` (`release` con R8/shrinkResources y `debug`) tras ejecutar `testNode7nmDebugUnitTest`.
-
----
-
-## 🗂️ Estructura del Proyecto
-
-```text
-Kofu_Mobile/
-├── .github/workflows/release.yml            # CI manual (workflow_dispatch) para Aura (rama kofu-go) node7nm
-├── docs/designs/kofu-go.md                  # Especificación técnica de Kofu Go
-├── Kofu_Assistant/app/
-│   ├── build.gradle.kts                     # Flavors node7nm / node5nm / frontierSub5nm, NDK r26, R8 release
-│   ├── proguard-rules.pro                   # Reglas -keep para JNI, callbacks y JSON
-│   └── src/
-│       ├── main/
-│       │   ├── assets/rag/kofu_knowledge_shards.json
-│       │   ├── cpp/                         # Motor nativo C++20 + llama.cpp embebido
-│       │   │   ├── CMakeLists.txt
-│       │   │   ├── include/{kofu_engine.hpp,model_loader.hpp,prompt_formatter.hpp,kofu_api21_compat.h}
-│       │   │   └── src/{kofu_engine.cpp,kofu_jni.cpp,model_loader.cpp,prompt_formatter.cpp}
-│       │   └── java/com/kofu/assistant/
-│       │       ├── MainActivity.kt          # Detección de RAM total + onTrimMemory escalonado
-│       │       ├── data/
-│       │       │   ├── KofuEditionProfile.kt
-│       │       │   ├── ChatCacheManager.kt  # Persistencia atómica (kofu_chats_cache.json)
-│       │       │   ├── AppUpdateManager.kt
-│       │       │   └── rag/{KofuRagDatabase.kt,HallucinationGuard.kt,KofuBenchmark500Suite.kt}
-│       │       ├── repository/{KofuNativeEngine.kt,LlamaRepository.kt,OllamaClient.kt}
-│       │       ├── service/{ModelDownloadService.kt,KofuConsoleReceiver.kt}
-│       │       └── ui/{ChatScreen.kt,components/*,theme/KofuTheme.kt}
-│       └── test/java/com/kofu/assistant/
-│           ├── KofuLogicTest.kt
-│           └── KofuRagAnd500StressTest.kt
-├── LICENSE
-└── README.md
+### Compilación Manual
+```bash
+cd Kofu_Assistant
+./gradlew testNode7nmDebugUnitTest testNode5nmDebugUnitTest
+./gradlew assembleNode5nmRelease assembleNode7nmRelease assembleFrontierSub5nmRelease
 ```
-
----
-
-## 📱 Requisitos del Dispositivo (`kofu-go`)
-
-| Requisito | Mínimo (Gama Entrada) | Recomendado (Gama Media) |
-| :--- | :--- | :--- |
-| **Sistema Operativo** | Android 5.0 (API 21, sabor `node7nm`) | Android 8.0+ (API 26+) |
-| **Arquitectura de CPU** | ARM64 (`arm64-v8a`) | ARM64 con extensiones DotProd / FP16 |
-| **Memoria RAM Física** | **3–4 GB** *(respetando techo <= 2 GB)* | **4–6 GB o más** |
-| **Almacenamiento Libre** | 1.5 GB libres (`~806 MB` modelo + `~24 MB` embedder) | 2.5 GB libres |
-| **Conexión de Red** | Solo para descarga inicial de pesos | Completamente innecesaria para operar |
-
----
-
-## 🛠️ Compilación, Pruebas y Benchmark ADB
-
-### Requisitos Previos
-* **Android SDK:** API Level 34
-* **Android NDK:** `26.1.10909125`
-* **CMake:** `3.22.1`
-* **JDK:** Java 17
-
-### Comandos Principales
-
-1. **Ejecutar pruebas unitarias y suite de estrés RAG de 500 preguntas:**
-   ```bash
-   cd Kofu_Assistant
-   ./gradlew testNode7nmDebugUnitTest testNode5nmDebugUnitTest
-   ```
-2. **Compilar APK de Aura (`node7nm`, rama `kofu-go`):**
-   ```bash
-   ./gradlew assembleNode7nmDebug
-   # O versión release optimizada con R8:
-   ./gradlew assembleNode7nmRelease
-   ```
-3. **Ubicación del APK generado:**
-   ```text
-   Kofu_Assistant/app/build/outputs/apk/node7nm/debug/app-node7nm-debug.apk
-   Kofu_Assistant/app/build/outputs/apk/node7nm/release/app-node7nm-release.apk
-   ```
-4. **Benchmark en dispositivo vía ADB (`KofuConsoleReceiver`):**
-   ```bash
-   adb shell 'am broadcast -n com.kofu.assistant/.service.KofuConsoleReceiver -a com.kofu.assistant.ACTION_CONSOLE_STATUS'
-   adb shell 'am broadcast -n com.kofu.assistant/.service.KofuConsoleReceiver -a com.kofu.assistant.ACTION_CONSOLE_STRESS_500 --ei count 500 --ez full_llm true'
-   ```
 
 ---
 
 ## 📄 Licencia
-
-Este proyecto está distribuido bajo la licencia **MIT**. Consulta el archivo [`LICENSE`](LICENSE) para más detalles.
-Los pesos de Google Gemma se rigen por los [Términos de Uso de Google Gemma](https://ai.google.dev/gemma/terms).
+Todo el código de `Aura-Kaze` (`dev-test`), el paginador `MoeUfsPager` y la familia de pesos **`Kaze-4.7B-A530M` / `Aura-Kaze-Go`** están bajo licencia **MIT** (sin dependencias de Google Gemma).

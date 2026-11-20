@@ -1,6 +1,7 @@
 #pragma once
 
 #include "model_loader.hpp"
+#include "moe_ufs_pager.hpp"
 #include "prompt_formatter.hpp"
 #include <string>
 #include <functional>
@@ -48,6 +49,7 @@ struct BenchmarkStats {
     double tokens_per_second{0.0};
     double decode_tokens_per_second{0.0};
     double prefill_ms{0.0};
+    double load_ms{0.0};
     size_t memory_rss_mb{0};
     size_t anon_rss_mb{0};
     size_t available_ram_mb{0};
@@ -73,6 +75,12 @@ public:
     void set_preferred_accelerator(int mode);
     void set_low_ram_budget(bool enabled, size_t max_rss_mb, bool debug_governor_enabled = false);
     void trim_memory(int level = 80);
+
+    // Motor jerárquico UFS MoE (Hot/Warm/Cold estilo Colibri, 100% MIT)
+    double probe_ufs_storage(const std::string& app_files_dir);
+    void configure_moe_pager(size_t warm_budget_mb, size_t total_ram_mb, bool force_ufs_mode = false);
+    uint32_t update_thermal_status(int android_thermal_status);
+    std::string get_moe_pager_stats_json() const;
 
     // Micro-embedder GGUF secundario para RAG semántico local
     bool load_embed_model(const std::string& filepath);
@@ -156,6 +164,9 @@ private:
     std::atomic<bool> low_ram_mode_{true};
     std::atomic<bool> debug_ram_governor_enabled_{false};
     std::atomic<size_t> max_rss_budget_mb_{1850};
+    std::atomic<int> thermal_status_{0};
+    std::atomic<uint32_t> thermal_throttle_ms_{0};
+    MoeUfsPager moe_pager_;
 
     BenchmarkStats last_stats_{};
 };

@@ -436,4 +436,51 @@ Java_com_kofu_assistant_repository_KofuNativeEngine_nativeSetLowRamBudget(
     );
 }
 
+JNIEXPORT jdouble JNICALL
+Java_com_kofu_assistant_repository_KofuNativeEngine_nativeProbeUfsStorage(
+    JNIEnv* env,
+    jobject /*thiz*/,
+    jstring j_files_dir
+) {
+    if (j_files_dir == nullptr) return 0.0;
+    const char* dir_chars = env->GetStringUTFChars(j_files_dir, nullptr);
+    if (dir_chars == nullptr) return 0.0;
+    std::string dir(dir_chars);
+    env->ReleaseStringUTFChars(j_files_dir, dir_chars);
+    return static_cast<jdouble>(kofu::KofuEngine::instance().probe_ufs_storage(dir));
+}
+
+JNIEXPORT void JNICALL
+Java_com_kofu_assistant_repository_KofuNativeEngine_nativeConfigureMoePager(
+    JNIEnv* /*env*/,
+    jobject /*thiz*/,
+    jlong j_warm_budget_mb,
+    jlong j_total_ram_mb,
+    jboolean j_force_ufs
+) {
+    kofu::KofuEngine::instance().configure_moe_pager(
+        static_cast<size_t>(std::max<jlong>(128, j_warm_budget_mb)),
+        static_cast<size_t>(std::max<jlong>(0, j_total_ram_mb)),
+        j_force_ufs == JNI_TRUE
+    );
+}
+
+JNIEXPORT jint JNICALL
+Java_com_kofu_assistant_repository_KofuNativeEngine_nativeUpdateThermalStatus(
+    JNIEnv* /*env*/,
+    jobject /*thiz*/,
+    jint j_thermal_status
+) {
+    return static_cast<jint>(kofu::KofuEngine::instance().update_thermal_status(static_cast<int>(j_thermal_status)));
+}
+
+JNIEXPORT jstring JNICALL
+Java_com_kofu_assistant_repository_KofuNativeEngine_nativeGetMoePagerStatsJson(
+    JNIEnv* env,
+    jobject /*thiz*/
+) {
+    std::string json = kofu::KofuEngine::instance().get_moe_pager_stats_json();
+    return env->NewStringUTF(json.c_str());
+}
+
 } // extern "C"

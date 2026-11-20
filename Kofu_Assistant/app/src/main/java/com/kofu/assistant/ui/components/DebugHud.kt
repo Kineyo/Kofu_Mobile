@@ -222,9 +222,40 @@ fun DebugHud(
                         overflow = TextOverflow.Ellipsis
                     )
                     Text(
-                        text = if (metrics.availableRamMb > 0) "RAM:${metrics.availableRamMb}MB" else "RSS:${metrics.memoryRssMb}MB",
+                        text = "RSS:${metrics.memoryRssMb}M Anon:${metrics.anonRssMb}M Av:${metrics.availableRamMb}M",
                         color = colors.onSurfaceSecondary,
-                        fontSize = 10.sp,
+                        fontSize = 9.sp,
+                        fontFamily = FontFamily.Monospace
+                    )
+                }
+
+                Spacer(modifier = Modifier.height(3.dp))
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = "${metrics.storageTier} (${String.format("%.0f", metrics.storageMbps)}MB/s)",
+                        color = colors.accentSecondary,
+                        fontSize = 9.sp,
+                        fontFamily = FontFamily.Monospace
+                    )
+                    Text(
+                        text = "MoE:${metrics.pagerMode} W:${metrics.warmUsedMb}/${metrics.warmBudgetMb}M",
+                        modifier = Modifier.weight(1f, fill = false).padding(horizontal = 4.dp),
+                        color = colors.onSurfaceSecondary,
+                        fontSize = 9.sp,
+                        fontFamily = FontFamily.Monospace,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                    Text(
+                        text = "Thm:${metrics.thermalGuardState}",
+                        color = if (metrics.thermalGuardState == "NOMINAL") colors.successAccent else colors.accentSecondary,
+                        fontSize = 9.sp,
+                        fontWeight = FontWeight.Bold,
                         fontFamily = FontFamily.Monospace
                     )
                 }

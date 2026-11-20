@@ -1,5 +1,6 @@
 package com.kofu.assistant.repository
 
+import android.app.ActivityManager
 import android.content.Context
 import android.net.Uri
 import android.provider.OpenableColumns
@@ -92,6 +93,12 @@ data class DebugMetrics(
     val activeRagDomain: String = "OFF",
     val ragLookupMs: Long = 0,
     val ragChunksCount: Int = 0,
+    val storageTier: String = "UNKNOWN",
+    val storageMbps: Double = 0.0,
+    val pagerMode: String = "DISABLED",
+    val warmUsedMb: Long = 0,
+    val warmBudgetMb: Long = 0,
+    val thermalGuardState: String = "NOMINAL",
     val lastRawPrompt: String = "",
     val lastRawResponse: String = ""
 )
@@ -105,7 +112,7 @@ object LlamaRepository {
     private const val TAG = "LlamaRepository"
     private const val PREFS_SETTINGS = "kofu_assistant_settings"
     private const val DEFAULT_SYSTEM_PROMPT =
-        "Eres Aura, una asistente educativa local útil, atenta y privada. Responde de forma clara, precisa y concisa en español."
+        "Tu nombre es Aura. Eres una asistente educativa y conversacional 100% offline en español. El usuario es una persona distinta a ti: nunca llames Aura al usuario ni digas que no tienes nombre propio."
 
     private val repositoryScope = CoroutineScope(Dispatchers.Main.immediate + SupervisorJob())
     @Volatile
@@ -167,53 +174,53 @@ object LlamaRepository {
 
     val AVAILABLE_MODELS = listOf(
         ModelOption(
-            id = "kofu-go-1b",
-            name = "Aura 1B Edge (Gemma 3 Q4_K_M)",
-            shortName = "Aura 1B",
-            description = "Modelo 4-bit entrenado para Aura (identidad y materias escolares) en teléfonos Edge (<= 2 GB RAM con RAG).",
-            fileName = "aura-1b-edge-q4_k_m.gguf",
-            downloadUrl = "https://huggingface.co/shebxyd/aura-1b-edge/resolve/main/aura-1b-edge-q4_k_m.gguf",
-            sizeLabel = "~806 MB",
+            id = "kaze-4.7b-a530m",
+            name = "Kaze-4.7B-A530M Base (MoE UFS • 100% MIT)",
+            shortName = "Kaze 4.7B MoE",
+            description = "Cerebro base 100% MIT (1 Shared + 31 Routed, 528M activos/tok). Usa paginación jerárquica Hot/Warm/Cold sobre UFS para correr en ~1.1 GB RAM.",
+            fileName = "kaze-4.7b-a530m-q4_k_m.gguf",
+            downloadUrl = "https://huggingface.co/shebxyd/kaze-4.7b-a530m-edge/resolve/main/kaze-4.7b-a530m-q4_k_m.gguf",
+            sizeLabel = "~2.75 GB (UFS)",
             isGemma4 = false,
             isRecommended = true
         ),
         ModelOption(
-            id = "kofu-v2",
-            name = "Aura 2.0 Edge (Gemma 2 2B)",
-            shortName = "Aura 2.0",
-            description = "Modelo optimizado para teléfonos Snapdragon ARMv8 (6–8 GB RAM). Rápido y equilibrado en español.",
-            fileName = "kofu-v2-edge-q4_k_m.gguf",
-            downloadUrl = "https://huggingface.co/shebxyd/kofu-v2-edge/resolve/main/kofu-v2-edge-q4_k_m.gguf",
-            sizeLabel = "~1.6 GB",
+            id = "kaze-aura-go-1.1b",
+            name = "Aura-Kaze-Go 1.1B Podado (100% MIT • <=3 GB)",
+            shortName = "Aura-Kaze-Go",
+            description = "Sub-modelo exprimido desde Kaze-4.7B (5–7 expertos activos, 100% MIT) para dispositivos <=3 GB RAM o almacenamiento eMMC lento.",
+            fileName = "aura-kaze-go-1.1b-q4_k_m.gguf",
+            downloadUrl = "https://huggingface.co/shebxyd/aura-kaze-go-edge/resolve/main/aura-kaze-go-1.1b-q4_k_m.gguf",
+            sizeLabel = "~660 MB",
+            isGemma4 = false,
+            isRecommended = true
+        ),
+        ModelOption(
+            id = "kofu-lfm25-1b",
+            name = "Referencia Edge (LFM2.5 1.2B)",
+            shortName = "LFM2.5 1.2B",
+            description = "Alternativa ligera de referencia <=3 GB RAM (~697 MB, 5.2 tok/s en Cortex-A53, sin dependencia de Gemma).",
+            fileName = "LFM2.5-1.2B-Instruct-Q4_K_M.gguf",
+            downloadUrl = "https://huggingface.co/LiquidAI/LFM2.5-1.2B-Instruct-GGUF/resolve/main/LFM2.5-1.2B-Instruct-Q4_K_M.gguf",
+            sizeLabel = "~697 MB",
             isGemma4 = false,
             isRecommended = false
         ),
         ModelOption(
-            id = "kofu-2b",
-            name = "Aura 1.0 Lite (Gemma 2B)",
-            shortName = "Gemma 1 Lite",
-            description = "Modelo ultraligero de baja huella de memoria para dispositivos con recursos reducidos.",
-            fileName = "kofu-gemma-2b-edge-q4_k_m.gguf",
-            downloadUrl = "https://huggingface.co/shebxyd/kofu-2b-edge/resolve/main/kofu-gemma-2b-edge-q4_k_m.gguf",
-            sizeLabel = "~1.4 GB",
+            id = "kofu-qwen3-1.7b",
+            name = "Referencia 4GB (Qwen3 1.7B)",
+            shortName = "Qwen3 1.7B",
+            description = "Alternativa de referencia para 4 GB+ RAM (~1.03 GB, sin dependencia de Gemma).",
+            fileName = "Qwen3-1.7B-Q4_K_M.gguf",
+            downloadUrl = "https://huggingface.co/unsloth/Qwen3-1.7B-GGUF/resolve/main/Qwen3-1.7B-Q4_K_M.gguf",
+            sizeLabel = "~1.03 GB",
             isGemma4 = false,
-            isRecommended = false
-        ),
-        ModelOption(
-            id = "kofu-gemma4",
-            name = "Aura 4.0 Pro (Gemma 4 E4B)",
-            shortName = "Gemma 4 Pro",
-            description = "Modelo insignia con máxima capacidad de razonamiento lógico. Requiere teléfono de gama alta (12GB+ RAM).",
-            fileName = "kofu-gemma4-edge-q4_k_m.gguf",
-            downloadUrl = "https://huggingface.co/shebxyd/kofu-gemma4-edge/resolve/main/kofu-gemma4-edge-q4_k_m.gguf",
-            sizeLabel = "~5.3 GB",
-            isGemma4 = true,
             isRecommended = false
         )
     )
 
     var selectedModel: ModelOption by mutableStateOf(
-        AVAILABLE_MODELS.find { it.id == KofuEditionProfile.current.defaultModelId } ?: AVAILABLE_MODELS.first()
+        AVAILABLE_MODELS.find { it.id == KofuEditionProfile.effectiveDefaultModelId } ?: AVAILABLE_MODELS.first()
     )
 
     init {
@@ -234,7 +241,7 @@ object LlamaRepository {
         if (!KofuNativeEngine.isNativeReady()) return
         KofuNativeEngine.nativeSetLowRamBudget(
             KofuEditionProfile.isStrict2GbBudgetActive,
-            KofuEditionProfile.STRICT_2GB_PROCESS_RSS_MB,
+            KofuEditionProfile.effectiveMaxRssBudgetMb,
             BuildConfig.DEBUG
         )
         KofuNativeEngine.nativeSetPreferredAccelerator(preferredAccelerator.code)
@@ -273,7 +280,19 @@ object LlamaRepository {
     fun loadPreferences(context: Context) {
         val appCtx = context.applicationContext
         appContext = appCtx
+        if (KofuEditionProfile.deviceTotalRamMb == 0L) {
+            val am = appCtx.getSystemService(Context.ACTIVITY_SERVICE) as? ActivityManager
+            if (am != null) {
+                val memInfo = ActivityManager.MemoryInfo()
+                am.getMemoryInfo(memInfo)
+                KofuEditionProfile.configureForDeviceRam(memInfo.totalMem)
+            }
+        }
         val prefs = appCtx.getSharedPreferences(PREFS_SETTINGS, Context.MODE_PRIVATE)
+        val cachedMbps = prefs.getFloat("ufs_probed_mbps", 0f).toDouble()
+        if (cachedMbps > 0.0) {
+            KofuEditionProfile.configureForStorageBandwidth(cachedMbps)
+        }
         ollamaHost = prefs.getString("ollama_host", "http://127.0.0.1:11434") ?: "http://127.0.0.1:11434"
         ollamaModel = prefs.getString("ollama_model", "kofu:latest") ?: "kofu:latest"
         val savedMode = prefs.getString("backend_mode", BackendMode.LOCAL_CPP.name)
@@ -282,7 +301,8 @@ object LlamaRepository {
         }.getOrDefault(BackendMode.LOCAL_CPP)
 
         val edition = KofuEditionProfile.current
-        val savedModelId = prefs.getString("selected_model_id", edition.defaultModelId)
+        val defaultModelId = KofuEditionProfile.effectiveDefaultModelId
+        val savedModelId = prefs.getString("selected_model_id", defaultModelId)
         if (!savedModelId.isNullOrBlank()) {
             AVAILABLE_MODELS.find { it.id == savedModelId }?.let { selectedModel = it }
         }
@@ -472,12 +492,16 @@ object LlamaRepository {
      */
     suspend fun loadModelFromPathSync(context: Context, filePath: String): Boolean = withContext(Dispatchers.IO) {
         appContext = context.applicationContext
+        if (isDownloadingModel || isDownloadPaused) {
+            cancelDownload(appContext!!)
+        }
         val file = File(filePath)
         if (!file.exists() || !file.canRead()) {
             Log.e(TAG, "Modelo no encontrado o sin permiso de lectura: $filePath")
             return@withContext false
         }
         KofuNativeEngine.nativeSetPreferredAccelerator(preferredAccelerator.code)
+        syncNativeConfig()
         val ok = KofuNativeEngine.nativeLoadModel(file.absolutePath)
         withContext(Dispatchers.Main) {
             if (ok) {
@@ -636,7 +660,7 @@ object LlamaRepository {
                         ragLookupMs = ragLookupMs,
                         ragChunksCount = ragChunksCount,
                         lastRawPrompt = fullPromptRepresentation,
-                        lastRawResponse = accumulated.toString()
+                        lastRawResponse = HallucinationGuard.stripThinkTags(accumulated.toString())
                     )
                 }
             }
@@ -699,6 +723,12 @@ object LlamaRepository {
         var soc = ""
         var decodeTps = fallbackTps
         var govState = "OFF"
+        var storageTier = "UNKNOWN"
+        var storageMbps = KofuEditionProfile.storageBandwidthMbps
+        var pagerMode = "DISABLED"
+        var warmUsedMb = 0L
+        var warmBudgetMb = 0L
+        var thermalGuardState = "NOMINAL"
         try {
             val json = JSONObject(statsJson)
             nativeRssMb = json.optLong("memory_rss_mb", 0L)
@@ -713,6 +743,14 @@ object LlamaRepository {
                 parsedDecodeTps > 0.0 -> parsedDecodeTps
                 parsedTps > 0.0 -> parsedTps
                 else -> fallbackTps
+            }
+            json.optJSONObject("moe_pager")?.let { mp ->
+                storageTier = mp.optString("storage_tier", storageTier)
+                storageMbps = mp.optDouble("storage_mbps", storageMbps)
+                pagerMode = mp.optString("pager_mode", pagerMode)
+                warmUsedMb = mp.optLong("warm_used_mb", 0L)
+                warmBudgetMb = mp.optLong("warm_budget_mb", 0L)
+                thermalGuardState = mp.optString("thermal_guard_state", thermalGuardState)
             }
         } catch (e: Exception) {
             Log.w(TAG, "No se pudo parsear statsJson nativo", e)
@@ -737,6 +775,12 @@ object LlamaRepository {
             activeRagDomain = ragDomainLabel,
             ragLookupMs = ragLookupMs,
             ragChunksCount = ragChunksCount,
+            storageTier = storageTier,
+            storageMbps = storageMbps,
+            pagerMode = pagerMode,
+            warmUsedMb = warmUsedMb,
+            warmBudgetMb = warmBudgetMb,
+            thermalGuardState = thermalGuardState,
             lastRawPrompt = fullPromptRepresentation,
             lastRawResponse = responseAcc.toString()
         )
@@ -920,11 +964,56 @@ object LlamaRepository {
 
     fun getExpectedMinSize(modelOption: ModelOption): Long {
         return when (modelOption.id) {
-            "kofu-go-1b" -> 650_000_000L
+            "kaze-4.7b-a530m" -> 2_200_000_000L
+            "kaze-aura-go-1.1b" -> 500_000_000L
+            "kofu-lfm25-1b" -> 600_000_000L
+            "kofu-qwen3-1.7b" -> 950_000_000L
             "kofu-embed-minilm" -> 15_000_000L
-            "kofu-2b" -> 1_200_000_000L
-            "kofu-gemma4" -> 4_500_000_000L
-            else -> 1_400_000_000L
+            else -> 500_000_000L
+        }
+    }
+
+    /**
+     * Ejecuta la sonda UFS vs eMMC sobre almacenamiento interno privado (filesDir)
+     * y configura el paginador jerárquico MoE (Hot/Warm/Cold) según RAM y ancho de banda real.
+     */
+    fun probeUfsAndConfigurePager(context: Context) {
+        if (!KofuNativeEngine.isNativeReady()) return
+        val appCtx = context.applicationContext
+        val prefs = appCtx.getSharedPreferences(PREFS_SETTINGS, Context.MODE_PRIVATE)
+        val cachedMbps = prefs.getFloat("ufs_probed_mbps", 0f).toDouble()
+        if (cachedMbps > 0.0) {
+            KofuEditionProfile.configureForStorageBandwidth(cachedMbps)
+        }
+        val dirPath = (appCtx.getExternalFilesDir(null) ?: appCtx.filesDir)?.absolutePath ?: return
+        repositoryScope.launch(Dispatchers.IO) {
+            try {
+                val mbps = KofuNativeEngine.nativeProbeUfsStorage(dirPath)
+                if (mbps > 0.0) {
+                    KofuEditionProfile.configureForStorageBandwidth(mbps)
+                    prefs.edit().putFloat("ufs_probed_mbps", mbps.toFloat()).apply()
+                }
+                val warmBudgetMb = when {
+                    KofuEditionProfile.isUltraTight3GbDevice -> 256L
+                    KofuEditionProfile.isStrict2GbBudgetActive -> 512L
+                    else -> 768L
+                }
+                KofuNativeEngine.nativeSetLowRamBudget(
+                    KofuEditionProfile.isStrict2GbBudgetActive,
+                    KofuEditionProfile.effectiveMaxRssBudgetMb,
+                    BuildConfig.DEBUG
+                )
+                KofuNativeEngine.nativeConfigureMoePager(
+                    warmBudgetMb = warmBudgetMb,
+                    totalRamMb = KofuEditionProfile.deviceTotalRamMb,
+                    forceUfs = false
+                )
+                Log.i(TAG, "UFS Probe (%s): %.1f MB/s | maxRss=%d MB | warmBudget=%d MB | modelo=%s".format(
+                    dirPath, mbps, KofuEditionProfile.effectiveMaxRssBudgetMb, warmBudgetMb, KofuEditionProfile.effectiveDefaultModelId
+                ))
+            } catch (t: Throwable) {
+                Log.w(TAG, "Fallo en sonda UFS MoE", t)
+            }
         }
     }
 

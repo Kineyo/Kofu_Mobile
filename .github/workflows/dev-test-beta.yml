@@ -1,0 +1,103 @@
+name: Build Beta Experimental (Branch dev-test • UFS MoE)
+
+on:
+  workflow_dispatch:
+    inputs:
+      publish_prerelease:
+        description: 'Publicar como GitHub Pre-Release experimental'
+        required: false
+        default: false
+        type: boolean
+  push:
+    branches:
+      - dev-test
+
+permissions:
+  contents: write
+
+jobs:
+  build-dev-test-beta:
+    name: Build Aura-Kaze Hybrid UFS MoE (7nm / 5nm / Frontier)
+    runs-on: ubuntu-latest
+    timeout-minutes: 75
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
+      - name: Setup Android NDK
+        uses: nttld/setup-ndk@v1
+        with:
+          ndk-version: r26b
+          link-to-sdk: true
+
+      - name: Configure Android SDK and Permissions
+        run: |
+          mkdir -p /home/runner/.android /home/runner/.config/.android
+          sudo chown -R runner:runner /home/runner "$ANDROID_SDK_ROOT" || true
+          echo "y" | ${ANDROID_SDK_ROOT}/cmdline-tools/latest/bin/sdkmanager "cmake;3.22.1" "ndk;26.1.10909125" || true
+
+      - name: Make Gradle Wrapper Executable
+        run: chmod +x Kofu_Assistant/gradlew
+
+      - name: Run Unit Tests & 500-Question RAG Stress Suite (7nm & 5nm)
+        run: |
+          cd Kofu_Assistant
+          ./gradlew testNode7nmDebugUnitTest testNode5nmDebugUnitTest --no-daemon --stacktrace
+
+      - name: Build Experimental Hybrid APKs (7nm / 5nm / Frontier)
+        run: |
+          cd Kofu_Assistant
+          ./gradlew \
+            assembleNode7nmRelease \
+            assembleNode5nmRelease \
+            assembleNode5nmDebug \
+            assembleFrontierSub5nmRelease \
+            --no-daemon --stacktrace
+
+      - name: Organize Beta Artifacts & Checksums
+        run: |
+          mkdir -p build-artifacts
+          SHORT_SHA="${GITHUB_SHA::7}"
+
+          cp Kofu_Assistant/app/build/outputs/apk/node7nm/release/app-node7nm-release.apk \
+            "build-artifacts/Aura-Kaze-devtest-${SHORT_SHA}-7nm-arm64-release.apk"
+          cp Kofu_Assistant/app/build/outputs/apk/node5nm/release/app-node5nm-release.apk \
+            "build-artifacts/Aura-Kaze-devtest-${SHORT_SHA}-5nm-ufs-arm64-release.apk"
+          cp Kofu_Assistant/app/build/outputs/apk/node5nm/debug/app-node5nm-debug.apk \
+            "build-artifacts/Aura-Kaze-devtest-${SHORT_SHA}-5nm-ufs-arm64-debug.apk"
+          cp Kofu_Assistant/app/build/outputs/apk/frontierSub5nm/release/app-frontierSub5nm-release.apk \
+            "build-artifacts/Aura-Kaze-devtest-${SHORT_SHA}-frontier-arm64-release.apk"
+
+          cd build-artifacts
+          sha256sum *.apk > SHA256SUMS.txt
+          ls -lh
+
+      - name: Upload Experimental Beta APKs
+        uses: actions/upload-artifact@v4
+        with:
+          name: aura-kaze-dev-test-beta-apks
+          path: build-artifacts/*
+          retention-days: 14
+
+      - name: Publish Experimental Pre-Release (Optional)
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.publish_prerelease == true }}
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: "dev-test-beta-${{ github.run_number }}"
+          name: "☢️ Aura-Kaze Beta Experimental (dev-test #${{ github.run_number }})"
+          prerelease: true
+          body: |
+            ## ⚠️ Beta Experimental Inflamable (`dev-test`)
+            - **Arquitectura:** Motor híbrido universal **UFS MoE Hot/Warm/Cold** (100% MIT, sin dependencia de Google Gemma).
+            - **Coexistencia segura:** Usa `applicationIdSuffix = ".devtest"` para instalarse junto a tu app estable sin sobrescribir datos.
+            - **Modelos 100% MIT:** `Kaze-4.7B-A530M` (streaming UFS) + `Aura-Kaze-Go 1.1B` (podado para <=3 GB / eMMC).
+          files: build-artifacts/*

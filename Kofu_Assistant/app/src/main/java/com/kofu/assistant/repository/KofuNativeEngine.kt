@@ -71,4 +71,10 @@ object KofuNativeEngine {
         numDocs: Int,
         dim: Int
     ): FloatArray?
+
+    // Motor jerárquico UFS MoE (Hot/Warm/Cold estilo Colibri, 100% MIT)
+    external fun nativeProbeUfsStorage(appFilesDir: String): Double
+    external fun nativeConfigureMoePager(warmBudgetMb: Long, totalRamMb: Long, forceUfs: Boolean)
+    external fun nativeUpdateThermalStatus(thermalStatus: Int): Int
+    external fun nativeGetMoePagerStatsJson(): String
 }

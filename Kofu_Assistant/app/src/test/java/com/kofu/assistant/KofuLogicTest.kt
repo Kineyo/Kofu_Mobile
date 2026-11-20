@@ -62,13 +62,37 @@ class KofuLogicTest {
     }
 
     @Test
-    fun `getExpectedMinSize accepts gemma3 1b sub-1GB model and micro-embedder`() {
-        val goModel = LlamaRepository.AVAILABLE_MODELS.first { it.id == "kofu-go-1b" }
-        assertTrue(goModel.fileName.contains("aura-1b-edge-q4_k_m"))
-        assertTrue(goModel.downloadUrl.contains("shebxyd/aura-1b-edge"))
-        assertTrue(LlamaRepository.AVAILABLE_MODELS.none { it.fileName.contains("qwen", ignoreCase = true) })
-        assertEquals(650_000_000L, LlamaRepository.getExpectedMinSize(goModel))
+    fun `getExpectedMinSize validates 100pct MIT Kaze catalog and zero Gemma dependency`() {
+        val kazeBase = LlamaRepository.AVAILABLE_MODELS.first { it.id == "kaze-4.7b-a530m" }
+        val auraGo = LlamaRepository.AVAILABLE_MODELS.first { it.id == "kaze-aura-go-1.1b" }
+        val lfmModel = LlamaRepository.AVAILABLE_MODELS.first { it.id == "kofu-lfm25-1b" }
+        val qwen3Model = LlamaRepository.AVAILABLE_MODELS.first { it.id == "kofu-qwen3-1.7b" }
+
+        assertTrue(kazeBase.fileName.contains("kaze-4.7b-a530m"))
+        assertTrue(auraGo.fileName.contains("aura-kaze-go-1.1b"))
+        assertFalse(LlamaRepository.AVAILABLE_MODELS.any { it.name.contains("Gemma", ignoreCase = true) })
+
+        assertEquals(2_200_000_000L, LlamaRepository.getExpectedMinSize(kazeBase))
+        assertEquals(500_000_000L, LlamaRepository.getExpectedMinSize(auraGo))
+        assertEquals(600_000_000L, LlamaRepository.getExpectedMinSize(lfmModel))
+        assertEquals(950_000_000L, LlamaRepository.getExpectedMinSize(qwen3Model))
         assertEquals(15_000_000L, LlamaRepository.getExpectedMinSize(LlamaRepository.EMBEDDER_MODEL))
+    }
+
+    @Test
+    fun `stripThinkTags removes empty or reasoning Qwen3 think blocks cleanly`() {
+        assertEquals(
+            "¡Hola! Soy Aura.",
+            HallucinationGuard.stripThinkTags("<think>\n\n</think>\n\n¡Hola! Soy Aura.")
+        )
+        assertEquals(
+            "Respuesta final",
+            HallucinationGuard.stripThinkTags("<think>paso interno</think>\nRespuesta final")
+        )
+        assertEquals(
+            "x < 5 es correcto",
+            HallucinationGuard.stripThinkTags("x < 5 es correcto")
+        )
     }
 
     @Test

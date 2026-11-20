@@ -116,6 +116,7 @@ jupyternb/
 *.mov
 *.webm
 *.mkv
+assets/huggingface_v2
 
 # ====================================================================
 # Binarios, Archivos Comprimidos & Paquetes

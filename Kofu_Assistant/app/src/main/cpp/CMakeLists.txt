@@ -76,6 +76,7 @@ add_library(
     SHARED
     src/model_loader.cpp
     src/prompt_formatter.cpp
+    src/moe_ufs_pager.cpp
     src/kofu_engine.cpp
     src/kofu_jni.cpp
 )
